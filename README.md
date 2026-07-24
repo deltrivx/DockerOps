@@ -11,7 +11,7 @@ DockerOps 是一款专为 NAS、家庭服务器和轻量运维场景设计的 Do
 
 目标很明确：让 Docker 更新更安全、问题排查更简单、日常运维更省心。
 
-> **v0.3.1**：首次使用 **管理员设置向导**（也可 `DOCKEROPS_ADMIN_USER` / `DOCKEROPS_ADMIN_PASSWORD` 环境变量预置）；日常运维全覆盖（启停/日志/镜像/网络/卷/系统清理/事件）；飞牛 **专业 FPK** 作为 Release 附件。  
+> **v0.3.2**：Unraid 风格侧栏 UI + 博客粒子背景；**一键检测 / 一键更新**（镜像 digest）；搜索过滤；首次管理员向导；日常运维全覆盖；飞牛 **专业 FPK** Release 附件。  
 > 管理源：Compose / Unraid / 三方。**完整接管**默认关闭。镜像仅由 **GitHub Actions → GHCR** 构建，禁止本机构建再上传。
 
 ---
@@ -340,7 +340,7 @@ ghcr.io/deltrivx/dockerops
 ```text
 DockerOps/
 ├── app/
-│   ├── main.py              # FastAPI 入口 v0.3.1
+│   ├── main.py              # FastAPI 入口 v0.3.2
 │   ├── host_platform.py     # Unraid / 飞牛 / generic 探测
 │   ├── docker_resources.py  # 日常资源运维
 │   ├── logs_stream.py · events_stream.py
@@ -382,6 +382,8 @@ DockerOps/
 - [x] 平台探测（Unraid / 飞牛）与飞牛引擎级部署配方
 - [x] 首次管理员设置向导 + 环境变量预置
 - [x] 飞牛专业 FPK 安装包 + Release 附件
+- [x] Unraid 风格 UI + 博客粒子背景
+- [x] 一键检测 / 一键更新（digest 比对）
 - [ ] Compose 栈文件编辑 / 更新检测
 - [ ] 一键回滚执行（当前为指引）
 - [ ] Web 终端（可选）

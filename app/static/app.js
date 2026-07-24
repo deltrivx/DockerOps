@@ -5,6 +5,25 @@ const state = {
   platform: "generic",
   tab: "overview",
   needsSetup: false,
+  containers: [],
+  compose: [],
+  unraid: [],
+  updateItems: [],
+  images: [],
+  networks: [],
+  volumes: [],
+};
+
+const TAB_TITLES = {
+  overview: ["总览", "健康分 · Doctor · 事件 · 运维记录"],
+  containers: ["容器", "生命周期 · 日志 · 安全更新"],
+  updates: ["更新检测", "一键检测镜像更新并安全升级"],
+  compose: ["Compose", "项目发现 · 双方接管"],
+  unraid: ["Unraid", "dockerMan 模板 · 非三方更新"],
+  images: ["镜像", "拉取 · 清理"],
+  networks: ["网络", "列表 · 创建 · 删除"],
+  volumes: ["卷", "列表 · 创建 · 清理"],
+  system: ["系统", "Engine 信息 · 磁盘占用 · 清理"],
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -61,7 +80,7 @@ function managerPill(manager, label) {
 }
 
 function escapeHtml(s) {
-  return String(s)
+  return String(s ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")
@@ -122,15 +141,23 @@ function actionBtn(text, fn, { danger = false, disabled = false } = {}) {
 
 function switchTab(name) {
   state.tab = name;
-  document.querySelectorAll("#main-tabs .tab").forEach((t) => {
+  document.querySelectorAll("#main-tabs .nav-item").forEach((t) => {
     t.classList.toggle("active", t.dataset.tab === name);
   });
   document.querySelectorAll(".tab-panel").forEach((p) => {
     const panels = (p.dataset.panel || "").split(/\s+/);
     p.hidden = !panels.includes(name);
   });
+  const titles = TAB_TITLES[name] || [name, ""];
+  const pt = $("#page-title");
+  const ps = $("#page-sub");
+  if (pt) pt.textContent = titles[0];
+  if (ps) ps.textContent = titles[1];
   if (["images", "networks", "volumes", "system"].includes(name)) {
     loadResources(name);
+  }
+  if (name === "updates" && !state.updateItems.length) {
+    // keep empty until user detects
   }
 }
 
@@ -140,7 +167,6 @@ async function checkSetup() {
     state.needsSetup = !!st.needs_setup;
     setAuthUI();
     if (state.needsSetup) {
-      // Clear any stale token from previous install
       state.token = "";
       state.username = "";
       localStorage.removeItem("dockerops_token");
@@ -153,6 +179,172 @@ async function checkSetup() {
     state.needsSetup = false;
     return null;
   }
+}
+
+function matchFilter(text, q) {
+  if (!q) return true;
+  return String(text || "").toLowerCase().includes(q.toLowerCase());
+}
+
+function renderContainers() {
+  const q = ($("#container-filter")?.value || "").trim();
+  const stf = ($("#container-status-filter")?.value || "").trim();
+  const mgr = ($("#container-mgr-filter")?.value || "").trim();
+  let items = state.containers || [];
+  items = items.filter((c) => {
+    if (stf && (c.status || "").toLowerCase() !== stf) return false;
+    if (mgr && (c.manager || "") !== mgr) return false;
+    if (!q) return true;
+    const blob = [c.name, c.id, c.image, c.manager, c.compose_project, c.label].join(" ");
+    return matchFilter(blob, q);
+  });
+  $("#container-count").textContent = `显示 ${items.length} / 共 ${state.containers.length} 个`;
+  const tbody = $("#container-rows");
+  tbody.innerHTML = "";
+  items.forEach((c) => {
+    const tr = document.createElement("tr");
+    const mgrExtra =
+      c.manager === "compose" && c.compose_project
+        ? `<div class="muted mono">${escapeHtml(c.compose_project)}/${escapeHtml(c.compose_service || "")}</div>`
+        : c.manager === "unraid"
+          ? `<div class="muted mono">template</div>`
+          : "";
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(c.name || c.id)}</strong><div class="muted mono">${escapeHtml(c.id || "")}</div></td>
+      <td>${managerPill(c.manager, c.label)}${mgrExtra}</td>
+      <td class="mono">${escapeHtml(c.image || "")}</td>
+      <td><span class="${pillClass(c.status)}">${escapeHtml(c.status || "-")}</span></td>
+      <td><span class="${pillClass(c.health || "none")}">${escapeHtml(c.health || "-")}</span></td>
+      <td>${c.restart_count ?? 0}</td>
+      <td class="actions"></td>
+    `;
+    const actions = tr.querySelector(".actions");
+    const id = c.id || c.name;
+    const running = (c.status || "").toLowerCase() === "running";
+    const paused = (c.status || "").toLowerCase() === "paused";
+    if (!running && !paused) actions.appendChild(actionBtn("启动", () => doLife(id, "start")));
+    if (running) {
+      actions.appendChild(actionBtn("停止", () => doLife(id, "stop")));
+      actions.appendChild(actionBtn("重启", () => doLife(id, "restart")));
+      actions.appendChild(actionBtn("暂停", () => doLife(id, "pause")));
+    }
+    if (paused) actions.appendChild(actionBtn("恢复", () => doLife(id, "unpause")));
+    actions.appendChild(actionBtn("日志", () => showLogs(id, c.name)));
+    actions.appendChild(actionBtn("备份", () => doBackup(id)));
+    actions.appendChild(actionBtn("更新", () => doUpdate(id)));
+    actions.appendChild(actionBtn("回滚", () => doRollback(id)));
+    if (c.manager === "third_party") {
+      actions.appendChild(actionBtn("Adopt", () => doAdopt(id), { disabled: !state.takeover }));
+    }
+    actions.appendChild(actionBtn("删除", () => doRemove(id), { danger: true, disabled: !state.takeover }));
+    tbody.appendChild(tr);
+  });
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="7" class="muted">无匹配容器</td></tr>`;
+  }
+}
+
+function renderCompose() {
+  const q = ($("#compose-filter")?.value || "").trim();
+  let items = state.compose || [];
+  if (q) {
+    items = items.filter((p) =>
+      matchFilter([p.name, p.working_dir, (p.services || []).join(" ")].join(" "), q)
+    );
+  }
+  $("#compose-count").textContent = `显示 ${items.length} / 共 ${state.compose.length} 个项目`;
+  const cbody = $("#compose-rows");
+  cbody.innerHTML = "";
+  items.forEach((p) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(p.name)}</strong><div class="muted">${escapeHtml(p.source || "")}</div></td>
+      <td>${escapeHtml((p.services || []).join(", ") || "-")}</td>
+      <td>${p.running ?? 0}/${p.total ?? 0}</td>
+      <td class="mono small">${escapeHtml(p.working_dir || "-")}<div class="muted">${escapeHtml((p.config_files || []).join(", "))}</div></td>
+      <td class="actions"></td>
+    `;
+    const actions = tr.querySelector(".actions");
+    actions.appendChild(actionBtn("备份", () => doComposeBackup(p.name)));
+    actions.appendChild(actionBtn("更新", () => doComposeUpdate(p.name)));
+    actions.appendChild(actionBtn("Up", () => doComposeUp(p.name), { disabled: !state.takeover }));
+    actions.appendChild(actionBtn("Down", () => doComposeDown(p.name), { danger: true, disabled: !state.takeover }));
+    cbody.appendChild(tr);
+  });
+  if (!items.length) {
+    cbody.innerHTML = `<tr><td colspan="5" class="muted">未发现 Compose 项目</td></tr>`;
+  }
+}
+
+function renderUnraid() {
+  const q = ($("#unraid-filter")?.value || "").trim();
+  let items = state.unraid || [];
+  if (q) {
+    items = items.filter((t) =>
+      matchFilter([t.name, t.repository, t.file, t.network].join(" "), q)
+    );
+  }
+  const ubody = $("#unraid-rows");
+  ubody.innerHTML = "";
+  items.forEach((t) => {
+    const tr = document.createElement("tr");
+    const st = (t.container && t.container.status) || "-";
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(t.name || t.file || "")}</strong><div class="muted mono">${escapeHtml(t.file || "")}</div></td>
+      <td class="mono small">${escapeHtml(t.repository || "-")}</td>
+      <td>${escapeHtml(t.network || "-")}${t.privileged ? ' <span class="pill">privileged</span>' : ""}</td>
+      <td><span class="${pillClass(st)}">${escapeHtml(st)}</span></td>
+      <td class="actions"></td>
+    `;
+    const actions = tr.querySelector(".actions");
+    const n = t.name || "";
+    actions.appendChild(actionBtn("备份", () => doUnraidBackup(n)));
+    actions.appendChild(actionBtn("模板更新", () => doUnraidUpdate(n)));
+    ubody.appendChild(tr);
+  });
+  if (!items.length) {
+    ubody.innerHTML = `<tr><td colspan="5" class="muted">无匹配模板</td></tr>`;
+  }
+}
+
+function renderUpdates() {
+  const body = $("#update-rows");
+  const items = state.updateItems || [];
+  body.innerHTML = "";
+  if (!items.length) {
+    body.innerHTML = `<tr><td colspan="7" class="muted">点击「检测更新」开始扫描</td></tr>`;
+    return;
+  }
+  items.forEach((u) => {
+    const tr = document.createElement("tr");
+    let pill = "update-err";
+    let label = u.message || "-";
+    if (u.update_available) {
+      pill = "update-yes";
+      label = "可更新";
+    } else if (u.check_ok) {
+      pill = "update-no";
+      label = "最新";
+    }
+    const canSel = !!u.update_available;
+    tr.innerHTML = `
+      <td><input type="checkbox" class="upd-sel" data-id="${escapeHtml(u.id || "")}" ${canSel ? "" : "disabled"} ${canSel ? "checked" : ""} /></td>
+      <td><strong>${escapeHtml(u.name || "")}</strong><div class="muted mono">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
+      <td>${managerPill(u.manager)}</td>
+      <td class="mono small">${escapeHtml(u.image || "-")}</td>
+      <td><span class="${pillClass(u.status)}">${escapeHtml(u.status || "-")}</span></td>
+      <td><span class="pill ${pill}">${escapeHtml(label)}</span>
+        <div class="muted small">${escapeHtml(u.message || "")}${u.remote_digest ? `<br/>remote: ${escapeHtml(String(u.remote_digest).slice(0, 24))}…` : ""}</div>
+      </td>
+      <td class="actions"></td>
+    `;
+    const actions = tr.querySelector(".actions");
+    if (u.id) {
+      actions.appendChild(actionBtn("安全更新", () => doUpdate(u.id)));
+      actions.appendChild(actionBtn("日志", () => showLogs(u.id, u.name)));
+    }
+    body.appendChild(tr);
+  });
 }
 
 async function loadAll() {
@@ -174,6 +366,9 @@ async function loadAll() {
 
     state.takeover = !!summary.takeover_enabled;
     state.platform = platform.platform || summary.platform || health.platform || "generic";
+    state.containers = containers.items || [];
+    state.compose = compose.items || [];
+    state.unraid = unraid.items || [];
     setAuthUI();
 
     const score = doctor.health_score ?? "--";
@@ -216,7 +411,6 @@ async function loadAll() {
       2
     );
 
-    // events
     const ev = $("#events-list");
     const evItems = events.items || [];
     if (!evItems.length) {
@@ -233,116 +427,19 @@ async function loadAll() {
         .join("");
     }
 
-    // containers
-    $("#container-count").textContent = `共 ${containers.count || 0} 个`;
-    const tbody = $("#container-rows");
-    tbody.innerHTML = "";
-    (containers.items || []).forEach((c) => {
-      const tr = document.createElement("tr");
-      const mgrExtra =
-        c.manager === "compose" && c.compose_project
-          ? `<div class="muted mono">${escapeHtml(c.compose_project)}/${escapeHtml(c.compose_service || "")}</div>`
-          : c.manager === "unraid"
-            ? `<div class="muted mono">template</div>`
-            : "";
-      tr.innerHTML = `
-        <td><strong>${escapeHtml(c.name || c.id)}</strong><div class="muted mono">${escapeHtml(c.id || "")}</div></td>
-        <td>${managerPill(c.manager, c.label)}${mgrExtra}</td>
-        <td class="mono">${escapeHtml(c.image || "")}</td>
-        <td><span class="${pillClass(c.status)}">${escapeHtml(c.status || "-")}</span></td>
-        <td><span class="${pillClass(c.health || "none")}">${escapeHtml(c.health || "-")}</span></td>
-        <td>${c.restart_count ?? 0}</td>
-        <td class="actions"></td>
-      `;
-      const actions = tr.querySelector(".actions");
-      const id = c.id || c.name;
-      const running = (c.status || "").toLowerCase() === "running";
-      const paused = (c.status || "").toLowerCase() === "paused";
-      if (!running && !paused) {
-        actions.appendChild(actionBtn("启动", () => doLife(id, "start")));
-      }
-      if (running) {
-        actions.appendChild(actionBtn("停止", () => doLife(id, "stop")));
-        actions.appendChild(actionBtn("重启", () => doLife(id, "restart")));
-        actions.appendChild(actionBtn("暂停", () => doLife(id, "pause")));
-      }
-      if (paused) {
-        actions.appendChild(actionBtn("恢复", () => doLife(id, "unpause")));
-      }
-      actions.appendChild(actionBtn("日志", () => showLogs(id, c.name)));
-      actions.appendChild(actionBtn("备份", () => doBackup(id)));
-      actions.appendChild(actionBtn("更新", () => doUpdate(id)));
-      actions.appendChild(actionBtn("回滚", () => doRollback(id)));
-      if (c.manager === "third_party") {
-        actions.appendChild(actionBtn("Adopt", () => doAdopt(id), { disabled: !state.takeover }));
-      }
-      actions.appendChild(
-        actionBtn("删除", () => doRemove(id), { danger: true, disabled: !state.takeover })
-      );
-      tbody.appendChild(tr);
-    });
-    if (!(containers.items || []).length) {
-      tbody.innerHTML = `<tr><td colspan="7" class="muted">暂无容器或无法连接 Docker</td></tr>`;
-    }
+    renderContainers();
+    renderCompose();
 
-    // compose
-    $("#compose-count").textContent = `共 ${(compose.items || []).length} 个项目`;
-    const cbody = $("#compose-rows");
-    cbody.innerHTML = "";
-    (compose.items || []).forEach((p) => {
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        <td><strong>${escapeHtml(p.name)}</strong><div class="muted">${escapeHtml(p.source || "")}</div></td>
-        <td>${escapeHtml((p.services || []).join(", ") || "-")}</td>
-        <td>${p.running ?? 0}/${p.total ?? 0}</td>
-        <td class="mono small">${escapeHtml(p.working_dir || "-")}<div class="muted">${escapeHtml((p.config_files || []).join(", "))}</div></td>
-        <td class="actions"></td>
-      `;
-      const actions = tr.querySelector(".actions");
-      actions.appendChild(actionBtn("备份", () => doComposeBackup(p.name)));
-      actions.appendChild(actionBtn("更新", () => doComposeUpdate(p.name)));
-      actions.appendChild(actionBtn("Up", () => doComposeUp(p.name), { disabled: !state.takeover }));
-      actions.appendChild(
-        actionBtn("Down", () => doComposeDown(p.name), { danger: true, disabled: !state.takeover })
-      );
-      cbody.appendChild(tr);
-    });
-    if (!(compose.items || []).length) {
-      cbody.innerHTML = `<tr><td colspan="5" class="muted">未发现 Compose 项目（需 labels 或 DOCKEROPS_COMPOSE_PROJECT_DIRS）</td></tr>`;
-    }
-
-    // unraid
     const uAvail = unraid.available;
     $("#unraid-count").textContent = uAvail
       ? `共 ${(unraid.items || []).length} 个 · ${unraid.path || ""}`
       : `模板目录未挂载 · ${unraid.path || ""}`;
-    const ubody = $("#unraid-rows");
-    ubody.innerHTML = "";
     if (!uAvail) {
-      ubody.innerHTML = `<tr><td colspan="5" class="muted">请挂载 /boot/config/plugins/dockerMan/templates-user → /unraid/templates-user（非 Unraid 可忽略）</td></tr>`;
+      $("#unraid-rows").innerHTML = `<tr><td colspan="5" class="muted">请挂载 templates-user（非 Unraid 可忽略）</td></tr>`;
     } else {
-      (unraid.items || []).forEach((t) => {
-        const tr = document.createElement("tr");
-        const st = (t.container && t.container.status) || "-";
-        tr.innerHTML = `
-          <td><strong>${escapeHtml(t.name || t.file || "")}</strong><div class="muted mono">${escapeHtml(t.file || "")}</div></td>
-          <td class="mono small">${escapeHtml(t.repository || "-")}</td>
-          <td>${escapeHtml(t.network || "-")}${t.privileged ? ' <span class="pill">privileged</span>' : ""}</td>
-          <td><span class="${pillClass(st)}">${escapeHtml(st)}</span></td>
-          <td class="actions"></td>
-        `;
-        const actions = tr.querySelector(".actions");
-        const n = t.name || "";
-        actions.appendChild(actionBtn("备份", () => doUnraidBackup(n)));
-        actions.appendChild(actionBtn("模板更新", () => doUnraidUpdate(n)));
-        ubody.appendChild(tr);
-      });
-      if (!(unraid.items || []).length) {
-        ubody.innerHTML = `<tr><td colspan="5" class="muted">模板目录为空</td></tr>`;
-      }
+      renderUnraid();
     }
 
-    // findings
     const findings = $("#findings");
     findings.innerHTML = "";
     const list = doctor.findings || [];
@@ -359,7 +456,6 @@ async function loadAll() {
       });
     }
 
-    // ops
     const opsBody = $("#ops-rows");
     opsBody.innerHTML = "";
     (ops.items || []).forEach((r) => {
@@ -389,93 +485,30 @@ async function loadResources(kind) {
   try {
     if (kind === "images" || kind === "all") {
       const data = await api("/api/images");
-      $("#image-count").textContent = `共 ${data.count || 0} 个`;
-      const body = $("#image-rows");
-      body.innerHTML = "";
-      (data.items || []).forEach((img) => {
-        const tr = document.createElement("tr");
-        const label = (img.tags && img.tags[0]) || img.label || img.id;
-        tr.innerHTML = `
-          <td class="mono"><strong>${escapeHtml(label)}</strong>
-            <div class="muted">${escapeHtml(img.id || "")}</div>
-            ${(img.tags || []).slice(1).map((t) => `<div class="muted">${escapeHtml(t)}</div>`).join("")}
-          </td>
-          <td>${fmtBytes(img.size)}</td>
-          <td class="muted small">${escapeHtml(String(img.created || "-").slice(0, 19))}</td>
-          <td class="actions"></td>
-        `;
-        const ref = (img.tags && img.tags[0]) || img.full_id || img.id;
-        tr.querySelector(".actions").appendChild(
-          actionBtn("删除", () => doImageRemove(ref), { danger: true, disabled: !state.takeover })
-        );
-        body.appendChild(tr);
-      });
-      if (!(data.items || []).length) {
-        body.innerHTML = `<tr><td colspan="4" class="muted">无镜像</td></tr>`;
-      }
+      state.images = data.items || [];
+      renderImages();
     }
     if (kind === "networks" || kind === "all") {
       const data = await api("/api/networks");
-      $("#network-count").textContent = `共 ${data.count || 0} 个`;
-      const body = $("#network-rows");
-      body.innerHTML = "";
-      const reserved = new Set(["bridge", "host", "none"]);
-      (data.items || []).forEach((n) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td><strong>${escapeHtml(n.name)}</strong><div class="muted mono">${escapeHtml(n.id || "")}</div></td>
-          <td>${escapeHtml(n.driver || "-")}</td>
-          <td class="mono small">${escapeHtml(n.subnet || "-")}</td>
-          <td>${n.containers ?? 0}</td>
-          <td class="actions"></td>
-        `;
-        if (!reserved.has(n.name)) {
-          tr.querySelector(".actions").appendChild(
-            actionBtn("删除", () => doNetRemove(n.id || n.name), {
-              danger: true,
-              disabled: !state.takeover,
-            })
-          );
-        }
-        body.appendChild(tr);
-      });
-      if (!(data.items || []).length) {
-        body.innerHTML = `<tr><td colspan="5" class="muted">无网络</td></tr>`;
-      }
+      state.networks = data.items || [];
+      renderNetworks();
     }
     if (kind === "volumes" || kind === "all") {
       const data = await api("/api/volumes");
-      $("#volume-count").textContent = `共 ${data.count || 0} 个`;
-      const body = $("#volume-rows");
-      body.innerHTML = "";
-      (data.items || []).forEach((v) => {
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td><strong>${escapeHtml(v.name)}</strong></td>
-          <td>${escapeHtml(v.driver || "-")}</td>
-          <td class="mono small">${escapeHtml(v.mountpoint || "-")}</td>
-          <td class="actions"></td>
-        `;
-        tr.querySelector(".actions").appendChild(
-          actionBtn("删除", () => doVolRemove(v.name), { danger: true, disabled: !state.takeover })
-        );
-        body.appendChild(tr);
-      });
-      if (!(data.items || []).length) {
-        body.innerHTML = `<tr><td colspan="4" class="muted">无命名卷</td></tr>`;
-      }
+      state.volumes = data.items || [];
+      renderVolumes();
     }
-    if (kind === "system" || kind === "all") {
+    if (kind === "system") {
       const [info, df] = await Promise.all([api("/api/system/info"), api("/api/system/df")]);
       $("#sys-info").textContent = JSON.stringify(info.info || info, null, 2);
       const slim = {
-        layers_size: df.df?.layers_size,
         images: (df.df?.images || []).length,
         containers: (df.df?.containers || []).length,
         volumes: (df.df?.volumes || []).length,
+        layers_size: df.df?.layers_size,
         top_images: (df.df?.images || []).slice(0, 8).map((i) => ({
           tags: i.tags,
-          size: fmtBytes(i.size),
+          size: i.size,
         })),
       };
       $("#sys-df").textContent = JSON.stringify(slim, null, 2);
@@ -485,6 +518,85 @@ async function loadResources(kind) {
       $("#sys-info").textContent = `加载失败：${e.message}`;
     }
   }
+}
+
+function renderImages() {
+  const q = ($("#image-filter")?.value || "").trim();
+  let items = state.images || [];
+  if (q) items = items.filter((i) => matchFilter([i.label, ...(i.tags || []), i.id].join(" "), q));
+  $("#image-count").textContent = `显示 ${items.length} / 共 ${state.images.length} 个`;
+  const body = $("#image-rows");
+  body.innerHTML = "";
+  items.forEach((img) => {
+    const tr = document.createElement("tr");
+    const label = (img.tags && img.tags[0]) || img.label || img.id;
+    tr.innerHTML = `
+      <td class="mono"><strong>${escapeHtml(label)}</strong>
+        <div class="muted">${escapeHtml((img.tags || []).slice(1).join(", "))}</div>
+        <div class="muted">${escapeHtml(img.id || "")}</div>
+      </td>
+      <td>${fmtBytes(img.size)}</td>
+      <td class="muted small">${escapeHtml(img.created || "-")}</td>
+      <td class="actions"></td>
+    `;
+    const ref = (img.tags && img.tags[0]) || img.id;
+    tr.querySelector(".actions").appendChild(
+      actionBtn("删除", () => doImageRemove(ref), { danger: true, disabled: !state.takeover })
+    );
+    body.appendChild(tr);
+  });
+  if (!items.length) body.innerHTML = `<tr><td colspan="4" class="muted">无镜像</td></tr>`;
+}
+
+function renderNetworks() {
+  const q = ($("#network-filter")?.value || "").trim();
+  let items = state.networks || [];
+  if (q) items = items.filter((n) => matchFilter([n.name, n.driver, n.subnet].join(" "), q));
+  $("#network-count").textContent = `显示 ${items.length} / 共 ${state.networks.length} 个`;
+  const body = $("#network-rows");
+  body.innerHTML = "";
+  items.forEach((n) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(n.name)}</strong><div class="muted mono">${escapeHtml(n.id || "")}</div></td>
+      <td>${escapeHtml(n.driver || "-")}</td>
+      <td class="mono small">${escapeHtml(n.subnet || "-")}</td>
+      <td>${n.containers ?? 0}</td>
+      <td class="actions"></td>
+    `;
+    const protectedNet = ["bridge", "host", "none"].includes(n.name);
+    tr.querySelector(".actions").appendChild(
+      actionBtn("删除", () => doNetRemove(n.id || n.name), {
+        danger: true,
+        disabled: !state.takeover || protectedNet,
+      })
+    );
+    body.appendChild(tr);
+  });
+  if (!items.length) body.innerHTML = `<tr><td colspan="5" class="muted">无网络</td></tr>`;
+}
+
+function renderVolumes() {
+  const q = ($("#volume-filter")?.value || "").trim();
+  let items = state.volumes || [];
+  if (q) items = items.filter((v) => matchFilter([v.name, v.driver, v.mountpoint].join(" "), q));
+  $("#volume-count").textContent = `显示 ${items.length} / 共 ${state.volumes.length} 个`;
+  const body = $("#volume-rows");
+  body.innerHTML = "";
+  items.forEach((v) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(v.name)}</strong></td>
+      <td>${escapeHtml(v.driver || "-")}</td>
+      <td class="mono small">${escapeHtml(v.mountpoint || "-")}</td>
+      <td class="actions"></td>
+    `;
+    tr.querySelector(".actions").appendChild(
+      actionBtn("删除", () => doVolRemove(v.name), { danger: true, disabled: !state.takeover })
+    );
+    body.appendChild(tr);
+  });
+  if (!items.length) body.innerHTML = `<tr><td colspan="4" class="muted">无命名卷（Unraid 多为 bind mount）</td></tr>`;
 }
 
 async function doLife(id, action) {
@@ -681,13 +793,113 @@ async function doVolRemove(name) {
   }
 }
 
-// tabs
-document.querySelectorAll("#main-tabs .tab").forEach((btn) => {
+async function runDetectUpdates() {
+  if (!requireLogin()) return;
+  const onlyRunning = !!$("#upd-only-running")?.checked;
+  const prog = $("#update-progress");
+  if (prog) {
+    prog.hidden = false;
+    prog.textContent = "正在检测镜像更新（registry digest）…";
+  }
+  try {
+    const r = await api("/api/ops/detect-updates", {
+      method: "POST",
+      body: JSON.stringify({ only_running: onlyRunning }),
+    });
+    state.updateItems = r.items || [];
+    $("#update-summary").textContent = r.message || `可更新 ${r.update_available_count || 0}`;
+    if (prog) prog.textContent = `完成 · 耗时 ${r.elapsed_sec ?? "?"}s`;
+    renderUpdates();
+    return r;
+  } catch (e) {
+    if (prog) prog.textContent = `检测失败：${e.message}`;
+    alert(e.message);
+    return null;
+  }
+}
+
+async function runOneClickUpdate(ids) {
+  if (!requireLogin()) return;
+  const onlyRunning = !!$("#upd-only-running")?.checked;
+  const n = ids ? ids.length : "全部可更新";
+  if (!confirm(`一键安全更新 ${n} 个容器？\n将按管理源执行备份+拉取+重建（需接管才真正 recreate）。`)) return;
+  const prog = $("#update-progress");
+  if (prog) {
+    prog.hidden = false;
+    prog.textContent = "正在一键更新…";
+  }
+  try {
+    const body = {
+      only_available: true,
+      only_running: onlyRunning,
+    };
+    if (ids && ids.length) body.container_ids = ids;
+    const r = await api("/api/ops/one-click-update", {
+      method: "POST",
+      body: JSON.stringify(body),
+    });
+    alert(r.message || "完成");
+    if (prog) prog.textContent = r.message || "完成";
+    await runDetectUpdates();
+    loadAll();
+  } catch (e) {
+    if (prog) prog.textContent = `更新失败：${e.message}`;
+    alert(e.message);
+  }
+}
+
+function selectedUpdateIds() {
+  return Array.from(document.querySelectorAll(".upd-sel:checked"))
+    .map((el) => el.dataset.id)
+    .filter(Boolean);
+}
+
+// ── Event bindings ──
+document.querySelectorAll("#main-tabs .nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
 $("#btn-refresh").addEventListener("click", loadAll);
 $("#logs-close").addEventListener("click", () => $("#logs-dialog").close());
+
+["container-filter", "container-status-filter", "container-mgr-filter"].forEach((id) => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener("input", renderContainers);
+  if (el) el.addEventListener("change", renderContainers);
+});
+const cf = $("#compose-filter");
+if (cf) cf.addEventListener("input", renderCompose);
+const uf = $("#unraid-filter");
+if (uf) uf.addEventListener("input", renderUnraid);
+const imf = $("#image-filter");
+if (imf) imf.addEventListener("input", renderImages);
+const nf = $("#network-filter");
+if (nf) nf.addEventListener("input", renderNetworks);
+const vf = $("#volume-filter");
+if (vf) vf.addEventListener("input", renderVolumes);
+
+$("#btn-detect-updates")?.addEventListener("click", runDetectUpdates);
+$("#btn-one-click-update")?.addEventListener("click", () => {
+  const ids = selectedUpdateIds();
+  runOneClickUpdate(ids.length ? ids : null);
+});
+$("#btn-quick-detect")?.addEventListener("click", async () => {
+  switchTab("updates");
+  await runDetectUpdates();
+});
+$("#btn-quick-update-all")?.addEventListener("click", async () => {
+  switchTab("updates");
+  if (!state.updateItems.length) await runDetectUpdates();
+  await runOneClickUpdate(null);
+});
+$("#btn-goto-containers")?.addEventListener("click", () => switchTab("containers"));
+$("#btn-goto-system")?.addEventListener("click", () => switchTab("system"));
+
+$("#upd-check-all")?.addEventListener("change", (e) => {
+  document.querySelectorAll(".upd-sel:not(:disabled)").forEach((c) => {
+    c.checked = e.target.checked;
+  });
+});
 
 $("#btn-image-pull").addEventListener("click", async () => {
   if (!requireLogin()) return;

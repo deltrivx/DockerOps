@@ -63,9 +63,10 @@ from unraid_mgr import (
     safe_update_unraid,
     templates_available,
 )
+from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.3.1"
+VERSION = "0.3.2"
 settings = get_settings()
 init_db()
 
@@ -547,6 +548,46 @@ def api_update(container_id: str, body: UpdateBody, actor: AuthUser) -> dict[str
 @app.post("/api/ops/rollback/{container_id}")
 def api_rollback(container_id: str, actor: AuthUser) -> dict[str, Any]:
     return rollback_guide(container_id, actor=actor)
+
+
+class DetectBody(BaseModel):
+    container_ids: list[str] | None = None
+    only_running: bool = False
+
+
+class OneClickUpdateBody(BaseModel):
+    container_ids: list[str] | None = None
+    only_available: bool = True
+    only_running: bool = False
+
+
+@app.post("/api/ops/detect-updates")
+def api_detect_updates(body: DetectBody, actor: AuthUser) -> dict[str, Any]:
+    """一键检测：比对本地与仓库镜像 digest，发现可更新容器。"""
+    return detect_updates(
+        container_ids=body.container_ids,
+        only_running=body.only_running,
+        actor=actor,
+    )
+
+
+@app.get("/api/ops/detect-updates")
+def api_detect_updates_get(
+    only_running: bool = False,
+    actor: AuthUser = ...,
+) -> dict[str, Any]:
+    return detect_updates(only_running=only_running, actor=actor)
+
+
+@app.post("/api/ops/one-click-update")
+def api_one_click_update(body: OneClickUpdateBody, actor: AuthUser) -> dict[str, Any]:
+    """一键更新：先检测，再按管理源安全更新（Compose/Unraid 模板/三方仅拉镜像）。"""
+    return one_click_update(
+        container_ids=body.container_ids,
+        only_available=body.only_available,
+        only_running=body.only_running,
+        actor=actor,
+    )
 
 
 # ── Compose ──────────────────────────────────────────────

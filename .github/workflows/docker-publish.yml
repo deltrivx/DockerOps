@@ -46,7 +46,7 @@ jobs:
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
             V="${GITHUB_REF_NAME#v}"
           else
-            V="0.3.1"
+            V="0.3.2"
             # prefer version from main.py if present
             if grep -q 'VERSION = "' app/main.py; then
               V=$(python3 -c "import re; print(re.search(r'VERSION\s*=\s*\"([^\"]+)\"', open('app/main.py').read()).group(1))")

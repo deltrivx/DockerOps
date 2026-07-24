@@ -7,251 +7,385 @@
   <link rel="stylesheet" href="/static/style.css" />
 </head>
 <body>
-  <header class="top">
-    <div class="brand">
-      <div class="logo">DO</div>
-      <div>
-        <h1>{{ title }}</h1>
-        <p class="muted">{{ subtitle }}</p>
-      </div>
-    </div>
-    <div class="header-actions">
-      <div id="platform-badge" class="badge">平台: --</div>
-      <div id="takeover-badge" class="badge">接管: --</div>
-      <div id="auth-state" class="muted">未登录（只读）</div>
-      <button id="btn-refresh" class="btn">刷新</button>
-      <button id="btn-login" class="btn primary">登录</button>
-    </div>
-  </header>
+  <canvas id="particles" aria-hidden="true"></canvas>
+  <div class="spotlight" id="spotlight" aria-hidden="true"></div>
 
-  <nav class="tabs" id="main-tabs">
-    <button type="button" class="tab active" data-tab="overview">总览</button>
-    <button type="button" class="tab" data-tab="containers">容器</button>
-    <button type="button" class="tab" data-tab="compose">Compose</button>
-    <button type="button" class="tab" data-tab="unraid">Unraid</button>
-    <button type="button" class="tab" data-tab="images">镜像</button>
-    <button type="button" class="tab" data-tab="networks">网络</button>
-    <button type="button" class="tab" data-tab="volumes">卷</button>
-    <button type="button" class="tab" data-tab="system">系统</button>
-  </nav>
-
-  <main class="grid">
-    <section class="card score-card tab-panel" data-panel="overview">
-      <h2>健康分</h2>
-      <div id="health-score" class="score">--</div>
-      <div id="health-label" class="badge">加载中</div>
-      <ul id="advice" class="advice"></ul>
-    </section>
-
-    <section class="card tab-panel" data-panel="overview">
-      <h2>管理源 / 平台 / 引擎</h2>
-      <pre id="engine-info" class="mono">加载中…</pre>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="overview">
-      <h2>近期 Docker 事件</h2>
-      <div id="events-list" class="events muted">加载中…</div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="overview">
-      <h2>Doctor 发现</h2>
-      <div id="findings" class="findings">加载中…</div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="overview">
-      <h2>运维记录</h2>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>时间</th>
-              <th>动作</th>
-              <th>目标</th>
-              <th>状态</th>
-              <th>操作者</th>
-            </tr>
-          </thead>
-          <tbody id="ops-rows">
-            <tr><td colspan="5" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="containers" hidden>
-      <div class="row-between">
-        <h2>容器</h2>
-        <span id="container-count" class="muted"></span>
-      </div>
-      <p class="muted small">启停/重启/日志：登录即可。删除容器需开启完整接管。Unraid 应用请优先用「模板更新」，勿裸删重建以免变三方。</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>管理源</th>
-              <th>镜像</th>
-              <th>状态</th>
-              <th>健康</th>
-              <th>重启</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="container-rows">
-            <tr><td colspan="7" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="compose" hidden>
-      <div class="row-between">
-        <h2>Compose 项目</h2>
-        <span id="compose-count" class="muted"></span>
-      </div>
-      <p class="muted small">与原系统（含飞牛 Docker UI / Unraid Compose 插件）共享同一 compose 工程；开启接管后可 up/down。</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>项目</th>
-              <th>服务</th>
-              <th>运行</th>
-              <th>目录 / 文件</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="compose-rows">
-            <tr><td colspan="5" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="unraid" hidden>
-      <div class="row-between">
-        <h2>Unraid 模板</h2>
-        <span id="unraid-count" class="muted"></span>
-      </div>
-      <p class="muted small">按 dockerMan <code>my-*.xml</code> 模板备份/升级（非 docker run 拼接），保持 dockerman，避免三方。</p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>Repository</th>
-              <th>网络</th>
-              <th>容器状态</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="unraid-rows">
-            <tr><td colspan="5" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="images" hidden>
-      <div class="row-between">
-        <h2>镜像</h2>
-        <div class="actions">
-          <span id="image-count" class="muted"></span>
-          <button type="button" class="btn small" id="btn-image-pull">拉取</button>
-          <button type="button" class="btn small danger" id="btn-image-prune">清理 dangling</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>标签 / ID</th>
-              <th>大小</th>
-              <th>创建</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="image-rows">
-            <tr><td colspan="4" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="networks" hidden>
-      <div class="row-between">
-        <h2>网络</h2>
-        <div class="actions">
-          <span id="network-count" class="muted"></span>
-          <button type="button" class="btn small" id="btn-net-create">创建</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>驱动</th>
-              <th>子网</th>
-              <th>容器数</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="network-rows">
-            <tr><td colspan="5" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="volumes" hidden>
-      <div class="row-between">
-        <h2>数据卷</h2>
-        <div class="actions">
-          <span id="volume-count" class="muted"></span>
-          <button type="button" class="btn small" id="btn-vol-create">创建</button>
-          <button type="button" class="btn small danger" id="btn-vol-prune">清理未使用</button>
-        </div>
-      </div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>名称</th>
-              <th>驱动</th>
-              <th>挂载点</th>
-              <th>操作</th>
-            </tr>
-          </thead>
-          <tbody id="volume-rows">
-            <tr><td colspan="4" class="muted">加载中…</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
-
-    <section class="card wide tab-panel" data-panel="system" hidden>
-      <div class="row-between">
-        <h2>系统</h2>
-        <button type="button" class="btn small danger" id="btn-sys-prune">系统清理</button>
-      </div>
-      <div class="split">
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <div class="logo">DO</div>
         <div>
-          <h3 class="subh">Engine Info</h3>
-          <pre id="sys-info" class="mono">加载中…</pre>
-        </div>
-        <div>
-          <h3 class="subh">磁盘占用 (df)</h3>
-          <pre id="sys-df" class="mono">加载中…</pre>
+          <div class="brand-title">DockerOps</div>
+          <div class="brand-sub muted">NAS 运维控制台</div>
         </div>
       </div>
-    </section>
-  </main>
+      <nav class="side-nav" id="main-tabs">
+        <button type="button" class="nav-item active" data-tab="overview">
+          <span class="nav-ico">◈</span> 总览
+        </button>
+        <button type="button" class="nav-item" data-tab="containers">
+          <span class="nav-ico">▣</span> 容器
+        </button>
+        <button type="button" class="nav-item" data-tab="updates">
+          <span class="nav-ico">↻</span> 更新检测
+        </button>
+        <button type="button" class="nav-item" data-tab="compose">
+          <span class="nav-ico">⧉</span> Compose
+        </button>
+        <button type="button" class="nav-item" data-tab="unraid">
+          <span class="nav-ico">◆</span> Unraid
+        </button>
+        <button type="button" class="nav-item" data-tab="images">
+          <span class="nav-ico">▢</span> 镜像
+        </button>
+        <button type="button" class="nav-item" data-tab="networks">
+          <span class="nav-ico">⬡</span> 网络
+        </button>
+        <button type="button" class="nav-item" data-tab="volumes">
+          <span class="nav-ico">▤</span> 卷
+        </button>
+        <button type="button" class="nav-item" data-tab="system">
+          <span class="nav-ico">⚙</span> 系统
+        </button>
+      </nav>
+      <div class="sidebar-foot muted small">
+        v0.3.2 · Unraid / 飞牛
+      </div>
+    </aside>
+
+    <div class="main-wrap">
+      <header class="top">
+        <div class="top-left">
+          <h1 id="page-title">总览</h1>
+          <p class="muted small" id="page-sub">{{ subtitle }}</p>
+        </div>
+        <div class="header-actions">
+          <div id="platform-badge" class="badge">平台: --</div>
+          <div id="takeover-badge" class="badge">接管: --</div>
+          <div id="auth-state" class="muted">未登录（只读）</div>
+          <button id="btn-refresh" class="btn">刷新</button>
+          <button id="btn-login" class="btn primary">登录</button>
+        </div>
+      </header>
+
+      <main class="grid" id="main-grid">
+        <!-- Overview -->
+        <section class="card score-card tab-panel" data-panel="overview">
+          <h2>健康分</h2>
+          <div id="health-score" class="score">--</div>
+          <div id="health-label" class="badge">加载中</div>
+          <ul id="advice" class="advice"></ul>
+        </section>
+
+        <section class="card tab-panel" data-panel="overview">
+          <h2>管理源 / 平台 / 引擎</h2>
+          <pre id="engine-info" class="mono">加载中…</pre>
+        </section>
+
+        <section class="card wide tab-panel" data-panel="overview">
+          <div class="row-between">
+            <h2>快捷操作</h2>
+          </div>
+          <div class="quick-actions">
+            <button type="button" class="btn primary" id="btn-quick-detect">一键检测更新</button>
+            <button type="button" class="btn" id="btn-quick-update-all">一键更新全部可更新</button>
+            <button type="button" class="btn" id="btn-goto-containers">容器管理</button>
+            <button type="button" class="btn" id="btn-goto-system">系统信息</button>
+          </div>
+          <p class="muted small" style="margin-top:0.75rem">
+            检测比对本地与仓库镜像 digest（不下载层）。更新按管理源分流：Unraid 模板 / Compose / 三方仅拉镜像。
+          </p>
+        </section>
+
+        <section class="card wide tab-panel" data-panel="overview">
+          <h2>近期 Docker 事件</h2>
+          <div id="events-list" class="events muted">加载中…</div>
+        </section>
+
+        <section class="card wide tab-panel" data-panel="overview">
+          <h2>Doctor 发现</h2>
+          <div id="findings" class="findings">加载中…</div>
+        </section>
+
+        <section class="card wide tab-panel" data-panel="overview">
+          <h2>运维记录</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>时间</th>
+                  <th>动作</th>
+                  <th>目标</th>
+                  <th>状态</th>
+                  <th>操作者</th>
+                </tr>
+              </thead>
+              <tbody id="ops-rows">
+                <tr><td colspan="5" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Containers -->
+        <section class="card wide tab-panel" data-panel="containers" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>容器</h2>
+              <span id="container-count" class="muted"></span>
+            </div>
+            <div class="toolbar">
+              <input type="search" id="container-filter" class="input" placeholder="搜索名称 / 镜像 / 管理源…" />
+              <select id="container-status-filter" class="input select">
+                <option value="">全部状态</option>
+                <option value="running">running</option>
+                <option value="exited">exited</option>
+                <option value="paused">paused</option>
+                <option value="created">created</option>
+              </select>
+              <select id="container-mgr-filter" class="input select">
+                <option value="">全部管理源</option>
+                <option value="unraid">Unraid</option>
+                <option value="compose">Compose</option>
+                <option value="third_party">三方</option>
+              </select>
+            </div>
+          </div>
+          <p class="muted small">启停/重启/日志：登录即可。删除需完整接管。Unraid 应用请优先「模板更新」。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>管理源</th>
+                  <th>镜像</th>
+                  <th>状态</th>
+                  <th>健康</th>
+                  <th>重启</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="container-rows">
+                <tr><td colspan="7" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Updates -->
+        <section class="card wide tab-panel" data-panel="updates" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>一键检测 / 更新</h2>
+              <span id="update-summary" class="muted">尚未检测</span>
+            </div>
+            <div class="toolbar">
+              <label class="chk"><input type="checkbox" id="upd-only-running" checked /> 仅运行中</label>
+              <button type="button" class="btn primary" id="btn-detect-updates">检测更新</button>
+              <button type="button" class="btn" id="btn-one-click-update">一键更新可更新项</button>
+            </div>
+          </div>
+          <p class="muted small">
+            通过 Docker Registry digest 比对发现新版本；一键更新走安全路径（备份 → 拉取 → 按管理源重建）。
+            完整接管开启后 Unraid/Compose 才会真正 recreate/up。
+          </p>
+          <div id="update-progress" class="muted small" hidden></div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
+                  <th>容器</th>
+                  <th>管理源</th>
+                  <th>镜像</th>
+                  <th>状态</th>
+                  <th>检测结果</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="update-rows">
+                <tr><td colspan="7" class="muted">点击「检测更新」开始扫描</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Compose -->
+        <section class="card wide tab-panel" data-panel="compose" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>Compose 项目</h2>
+              <span id="compose-count" class="muted"></span>
+            </div>
+            <input type="search" id="compose-filter" class="input" placeholder="搜索项目…" />
+          </div>
+          <p class="muted small">与原系统共享同一 compose 工程；开启接管后可 up/down。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>项目</th>
+                  <th>服务</th>
+                  <th>运行</th>
+                  <th>目录 / 文件</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="compose-rows">
+                <tr><td colspan="5" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Unraid -->
+        <section class="card wide tab-panel" data-panel="unraid" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>Unraid 模板</h2>
+              <span id="unraid-count" class="muted"></span>
+            </div>
+            <input type="search" id="unraid-filter" class="input" placeholder="搜索模板…" />
+          </div>
+          <p class="muted small">按 dockerMan <code>my-*.xml</code> 模板备份/升级，保持 dockerman，避免三方。</p>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>Repository</th>
+                  <th>网络</th>
+                  <th>容器状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="unraid-rows">
+                <tr><td colspan="5" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Images -->
+        <section class="card wide tab-panel" data-panel="images" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>镜像</h2>
+              <span id="image-count" class="muted"></span>
+            </div>
+            <div class="toolbar">
+              <input type="search" id="image-filter" class="input" placeholder="搜索镜像…" />
+              <button type="button" class="btn small" id="btn-image-pull">拉取</button>
+              <button type="button" class="btn small danger" id="btn-image-prune">清理 dangling</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>标签 / ID</th>
+                  <th>大小</th>
+                  <th>创建</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="image-rows">
+                <tr><td colspan="4" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Networks -->
+        <section class="card wide tab-panel" data-panel="networks" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>网络</h2>
+              <span id="network-count" class="muted"></span>
+            </div>
+            <div class="toolbar">
+              <input type="search" id="network-filter" class="input" placeholder="搜索网络…" />
+              <button type="button" class="btn small" id="btn-net-create">创建</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>驱动</th>
+                  <th>子网</th>
+                  <th>容器数</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="network-rows">
+                <tr><td colspan="5" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- Volumes -->
+        <section class="card wide tab-panel" data-panel="volumes" hidden>
+          <div class="row-between wrap">
+            <div>
+              <h2>数据卷</h2>
+              <span id="volume-count" class="muted"></span>
+            </div>
+            <div class="toolbar">
+              <input type="search" id="volume-filter" class="input" placeholder="搜索卷…" />
+              <button type="button" class="btn small" id="btn-vol-create">创建</button>
+              <button type="button" class="btn small danger" id="btn-vol-prune">清理未使用</button>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>名称</th>
+                  <th>驱动</th>
+                  <th>挂载点</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="volume-rows">
+                <tr><td colspan="4" class="muted">加载中…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <!-- System -->
+        <section class="card wide tab-panel" data-panel="system" hidden>
+          <div class="row-between">
+            <h2>系统</h2>
+            <button type="button" class="btn small danger" id="btn-sys-prune">系统清理</button>
+          </div>
+          <div class="split">
+            <div>
+              <h3 class="subh">Engine Info</h3>
+              <pre id="sys-info" class="mono">加载中…</pre>
+            </div>
+            <div>
+              <h3 class="subh">磁盘占用 (df)</h3>
+              <pre id="sys-df" class="mono">加载中…</pre>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="foot muted">
+        DockerOps v0.3.2 · Unraid 风格 UI · 粒子背景 · 一键检测/更新 ·
+        <a href="/docs" target="_blank" rel="noopener">Swagger</a>
+      </footer>
+    </div>
+  </div>
 
   <dialog id="setup-dialog">
     <form method="dialog" id="setup-form">
       <h3>首次使用 · 设置管理员</h3>
-      <p class="muted small">尚未配置管理员账号。请设置用户名与密码（也可通过环境变量 <code>DOCKEROPS_ADMIN_USER</code> / <code>DOCKEROPS_ADMIN_PASSWORD</code> 预置，容器启动时自动完成）。</p>
+      <p class="muted small">尚未配置管理员。也可通过环境变量 <code>DOCKEROPS_ADMIN_PASSWORD</code> 预置。</p>
       <label>用户名 <input name="username" value="admin" minlength="3" maxlength="32" required /></label>
       <label>密码 <input name="password" type="password" minlength="6" required /></label>
       <label>确认密码 <input name="password_confirm" type="password" minlength="6" required /></label>
@@ -284,12 +418,7 @@
     <pre id="logs-body" class="mono logs-body">…</pre>
   </dialog>
 
-  <footer class="foot muted">
-    v0.3.1 · 首次设置向导 · 日常运维全覆盖 · Tower / 飞牛 FPK ·
-    删除与 prune 需开启接管 ·
-    <a href="/docs" target="_blank" rel="noopener">Swagger</a>
-  </footer>
-
+  <script src="/static/particles.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
