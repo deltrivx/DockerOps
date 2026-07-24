@@ -238,6 +238,31 @@ def update_user_password(username: str, password_hash: str) -> bool:
             conn.close()
 
 
+def list_usernames() -> list[str]:
+    with _lock:
+        conn = connect()
+        try:
+            rows = conn.execute("SELECT username FROM users ORDER BY created_at ASC").fetchall()
+            return [r["username"] for r in rows]
+        finally:
+            conn.close()
+
+
+def delete_all_users_and_sessions() -> int:
+    """Wipe auth tables (deploy-time admin reset)."""
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute("SELECT COUNT(*) AS c FROM users")
+            n = int(cur.fetchone()["c"] or 0)
+            conn.execute("DELETE FROM sessions")
+            conn.execute("DELETE FROM users")
+            conn.commit()
+            return n
+        finally:
+            conn.close()
+
+
 def get_meta(key: str) -> str | None:
     with _lock:
         conn = connect()

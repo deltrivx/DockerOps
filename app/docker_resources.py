@@ -14,6 +14,7 @@ from docker_client import (
     kill_container,
     list_images,
     list_networks,
+    list_running_stats,
     list_volumes,
     pause_container,
     prune_images,
@@ -22,6 +23,7 @@ from docker_client import (
     remove_image,
     remove_network,
     remove_volume,
+    rename_container,
     restart_container,
     start_container,
     system_df,
@@ -65,6 +67,8 @@ def lifecycle(action: str, container_id: str, actor: str | None = None, **kwargs
             item = unpause_container(container_id)
         elif action == "kill":
             item = kill_container(container_id, signal=str(kwargs.get("signal") or "SIGKILL"))
+        elif action == "rename":
+            item = rename_container(container_id, str(kwargs.get("name") or kwargs.get("new_name") or ""))
         elif action == "remove":
             _takeover_guard()
             item = container_action_remove(
@@ -77,15 +81,76 @@ def lifecycle(action: str, container_id: str, actor: str | None = None, **kwargs
     except KeyError:
         rec = _record(f"container_{action}", container_id, "failed", {"error": "not_found"}, actor)
         return {"ok": False, "record": rec, "message": "容器不存在"}
-    except PermissionError as e:
+    except PermissionError:
         raise
     except Exception as e:
         rec = _record(f"container_{action}", container_id, "failed", {"error": str(e)}, actor)
         return {"ok": False, "record": rec, "message": str(e)}
 
     name = item.get("name") or container_id
-    rec = _record(f"container_{action}", name, "ok", {"id": item.get("id"), "state": item.get("status") or item.get("state")}, actor)
+    rec = _record(
+        f"container_{action}",
+        name,
+        "ok",
+        {"id": item.get("id"), "state": item.get("status") or item.get("state")},
+        actor,
+    )
     return {"ok": True, "item": item, "record": rec, "message": f"{action} 完成：{name}"}
+
+
+def batch_lifecycle(
+    action: str,
+    container_ids: list[str],
+    actor: str | None = None,
+    **kwargs: Any,
+) -> dict[str, Any]:
+    """Portainer-style multi-select start/stop/restart/pause/unpause/kill/remove."""
+    _resource_guard()
+    action = (action or "").lower().strip()
+    if action in ("remove", "rm", "delete"):
+        _takeover_guard()
+        action = "remove"
+    results: list[dict[str, Any]] = []
+    ok_n = fail_n = 0
+    for cid in container_ids or []:
+        try:
+            r = lifecycle(action, cid, actor=actor, **kwargs)
+            success = bool(r.get("ok", True))
+            ok_n += 1 if success else 0
+            fail_n += 0 if success else 1
+            results.append(
+                {
+                    "id": cid,
+                    "ok": success,
+                    "message": r.get("message"),
+                    "name": (r.get("item") or {}).get("name"),
+                }
+            )
+        except Exception as e:
+            fail_n += 1
+            results.append({"id": cid, "ok": False, "message": str(e)})
+    rec = _record(
+        f"batch_{action}",
+        f"{len(container_ids or [])} containers",
+        "ok" if fail_n == 0 else ("partial" if ok_n else "failed"),
+        {"ok": ok_n, "failed": fail_n, "action": action},
+        actor,
+    )
+    return {
+        "ok": fail_n == 0,
+        "action": action,
+        "updated_ok": ok_n,
+        "updated_failed": fail_n,
+        "results": results,
+        "record": rec,
+        "message": f"批量 {action}：成功 {ok_n}，失败 {fail_n}",
+    }
+
+
+def activity_stats(limit: int = 12) -> dict[str, Any]:
+    _resource_guard()
+    items = list_running_stats(limit=limit)
+    return {"ok": True, "count": len(items), "items": items}
 
 
 # ── Images ─────────────────────────────────────────────────

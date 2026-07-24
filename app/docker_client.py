@@ -316,6 +316,76 @@ def container_action_stop(container_id: str, timeout: int = 20) -> dict[str, Any
     return _summarize(cont, _template_names())
 
 
+def rename_container(container_id: str, new_name: str) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    name = (new_name or "").strip().lstrip("/")
+    if not name:
+        raise ValueError("新名称不能为空")
+    cont.rename(name)
+    cont.reload()
+    return {
+        "id": cont.short_id,
+        "name": cont.name,
+        "status": cont.status,
+        "message": f"已重命名为 {cont.name}",
+    }
+
+
+def container_stats(container_id: str) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    if cont.status != "running":
+        return {"ok": True, "id": cont.short_id, "name": cont.name, "status": cont.status, "stats": None}
+    stats = cont.stats(stream=False)
+    return {
+        "ok": True,
+        "id": cont.short_id,
+        "name": cont.name,
+        "status": cont.status,
+        "stats": _parse_stats(stats),
+    }
+
+
+def list_running_stats(limit: int = 12) -> list[dict[str, Any]]:
+    """Lightweight CPU/mem for running containers (Portainer-style activity)."""
+    c = get_client()
+    items = c.containers.list(all=False)
+    out: list[dict[str, Any]] = []
+    for cont in items[: max(1, min(limit, 40))]:
+        try:
+            stats = cont.stats(stream=False)
+            parsed = _parse_stats(stats)
+        except Exception as e:
+            parsed = {"error": str(e)}
+        out.append(
+            {
+                "id": cont.short_id,
+                "name": cont.name,
+                "image": _image_name((cont.attrs or {}).get("Config") or {}),
+                "status": cont.status,
+                "stats": parsed,
+            }
+        )
+    return out
+
+
+def image_history(image_id: str) -> list[dict[str, Any]]:
+    c = get_client()
+    hist = c.api.history(image_id)
+    rows = []
+    for h in hist or []:
+        rows.append(
+            {
+                "id": (h.get("Id") or "")[:12],
+                "created": h.get("Created"),
+                "created_by": (h.get("CreatedBy") or "")[:200],
+                "size": h.get("Size"),
+                "tags": h.get("Tags") or [],
+                "comment": h.get("Comment") or "",
+            }
+        )
+    return rows
+
+
 def container_action_remove(container_id: str, force: bool = False, volumes: bool = False) -> dict[str, Any]:
     cont = _get_cont(container_id)
     name = cont.name

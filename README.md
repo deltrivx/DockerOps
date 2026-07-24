@@ -11,7 +11,7 @@ DockerOps 是一款专为 NAS、家庭服务器和轻量运维场景设计的 Do
 
 目标很明确：让 Docker 更新更安全、问题排查更简单、日常运维更省心。
 
-> **v0.3.3**：修复飞牛 FPK 桌面黑屏（CGI 智能跳转）；补全品牌图标；Unraid 容器名 **DockerOps**；Unraid 风格侧栏 UI + 粒子背景 + **一键检测/更新**；首次管理员向导；日常运维全覆盖。  
+> **v0.4.0**：运维总览模块卡片（平台 / Docker 引擎 / 健康分 / 系统信息 / 活动容器资源）；Unraid 风格响应式 UI；粒子增强 + 背景个性化；说明与更新日志菜单；侧栏 **飞牛系统 / Unraid系统**；批量启停、重命名、stats、镜像 history。  
 > 管理源：Compose / Unraid / 三方。**完整接管**默认关闭。镜像仅由 **GitHub Actions → GHCR** 构建，禁止本机构建再上传。
 
 ---
@@ -340,7 +340,7 @@ ghcr.io/deltrivx/dockerops
 ```text
 DockerOps/
 ├── app/
-│   ├── main.py              # FastAPI 入口 v0.3.3
+│   ├── main.py              # FastAPI 入口 v0.4.0
 │   ├── host_platform.py     # Unraid / 飞牛 / generic 探测
 │   ├── docker_resources.py  # 日常资源运维
 │   ├── logs_stream.py · events_stream.py

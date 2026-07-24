@@ -32,6 +32,8 @@ from config import get_settings
 from db import audit, init_db
 from docker_client import get_container, list_containers, ping, refresh_template_name_cache
 from docker_resources import (
+    activity_stats,
+    batch_lifecycle,
     images_list,
     images_prune,
     images_pull,
@@ -48,6 +50,8 @@ from docker_resources import (
     volumes_prune,
     volumes_remove,
 )
+from db import get_meta, set_meta
+from docker_client import image_history, list_running_stats
 from doctor import diagnose_all, diagnose_one
 from events_stream import recent_events, sse_docker_events
 from host_platform import platform_info
@@ -66,7 +70,54 @@ from unraid_mgr import (
 from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.3.3"
+VERSION = "0.4.0"
+CHANGELOG = [
+    {
+        "version": "0.4.0",
+        "date": "2026-07-25",
+        "items": [
+            "运维控制台总览：平台/引擎卡片、健康分、系统信息、活动容器资源",
+            "Unraid 风格模块卡片 + PC/平板/手机响应式",
+            "粒子特效增强 + 背景个性化设置",
+            "说明与更新日志独立菜单",
+            "Portainer 日常补齐：批量启停/重启、重命名、活动 stats、镜像 history",
+            "侧栏平台徽章：飞牛系统 / Unraid 系统",
+        ],
+    },
+    {
+        "version": "0.3.3",
+        "date": "2026-07-25",
+        "items": [
+            "修复飞牛 FPK 桌面 127.0.0.1 黑屏（CGI 智能跳转）",
+            "品牌图标补全；Unraid 容器名 DockerOps",
+        ],
+    },
+    {
+        "version": "0.3.2",
+        "date": "2026-07-24",
+        "items": [
+            "Unraid 风格侧栏 UI + 博客粒子背景",
+            "一键检测 / 一键更新（Registry digest）",
+            "资源表搜索过滤",
+        ],
+    },
+    {
+        "version": "0.3.1",
+        "date": "2026-07-24",
+        "items": [
+            "首次管理员设置向导",
+            "飞牛专业 FPK Release 附件",
+        ],
+    },
+    {
+        "version": "0.3.0",
+        "date": "2026-07-24",
+        "items": [
+            "日常运维全覆盖：生命周期/日志/镜像/网络/卷/系统/事件",
+            "Compose + Unraid 模板双方接管",
+        ],
+    },
+]
 settings = get_settings()
 init_db()
 
@@ -143,6 +194,25 @@ class PruneBody(BaseModel):
 class RemoveBody(BaseModel):
     force: bool = False
     volumes: bool = False
+
+
+class BatchBody(BaseModel):
+    action: str = Field(..., description="start|stop|restart|pause|unpause|kill|remove")
+    ids: list[str] = Field(default_factory=list)
+    force: bool = False
+    volumes: bool = False
+
+
+class RenameBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=128)
+
+
+class PrefsBody(BaseModel):
+    particles: bool | None = None
+    particles_count: int | None = Field(default=None, ge=20, le=300)
+    bg_theme: str | None = None  # cyber | deep | aurora | plain
+    card_density: str | None = None  # comfortable | compact
+    reduce_motion: bool | None = None
 
 
 def _takeover_or_403() -> None:
@@ -277,6 +347,22 @@ def api_containers(actor: OptionalUser) -> dict[str, Any]:
     return {"ok": True, "count": len(items), "items": items, "viewer": actor}
 
 
+@app.post("/api/containers/batch")
+def api_batch(body: BatchBody, actor: AuthUser) -> dict[str, Any]:
+    """Static path registered before {container_id} routes."""
+    _resource_or_403()
+    if not body.ids:
+        raise HTTPException(status_code=400, detail="请选择至少一个容器")
+    return _perm_http(
+        batch_lifecycle,
+        body.action,
+        body.ids,
+        actor=actor,
+        force=body.force,
+        volumes=body.volumes,
+    )
+
+
 @app.get("/api/containers/{container_id}")
 def api_container(container_id: str, actor: OptionalUser) -> dict[str, Any]:
     try:
@@ -336,6 +422,100 @@ def api_remove_container(
 ) -> dict[str, Any]:
     _resource_or_403()
     return _perm_http(lifecycle, "remove", container_id, actor=actor, force=force, volumes=volumes)
+
+
+@app.post("/api/containers/{container_id}/rename")
+def api_rename(container_id: str, body: RenameBody, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "rename", container_id, actor=actor, name=body.name.strip())
+
+
+@app.get("/api/activity")
+def api_activity(actor: OptionalUser, limit: int = Query(12, ge=1, le=40)) -> dict[str, Any]:
+    _resource_or_403()
+    try:
+        data = activity_stats(limit=limit)
+        data["viewer"] = actor
+        return data
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@app.get("/api/containers/{container_id}/stats")
+def api_container_stats(container_id: str, actor: OptionalUser) -> dict[str, Any]:
+    _resource_or_403()
+    try:
+        from docker_client import container_stats
+
+        item = container_stats(container_id)
+        return {"ok": True, "item": item, "viewer": actor}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="容器不存在") from None
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@app.get("/api/images/{image_id:path}/history")
+def api_image_history(image_id: str, actor: OptionalUser) -> dict[str, Any]:
+    _resource_or_403()
+    try:
+        items = image_history(image_id)
+        return {"ok": True, "count": len(items), "items": items, "viewer": actor}
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+@app.get("/api/changelog")
+def api_changelog(actor: OptionalUser = None) -> dict[str, Any]:
+    return {"ok": True, "version": VERSION, "items": CHANGELOG, "viewer": actor}
+
+
+def _default_prefs() -> dict[str, Any]:
+    return {
+        "particles": True,
+        "particles_count": 90,
+        "bg_theme": "cyber",
+        "card_density": "comfortable",
+        "reduce_motion": False,
+    }
+
+
+def _load_prefs() -> dict[str, Any]:
+    import json
+
+    raw = get_meta("ui_prefs")
+    prefs = _default_prefs()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                prefs.update({k: v for k, v in data.items() if k in prefs})
+        except Exception:
+            pass
+    return prefs
+
+
+@app.get("/api/prefs")
+def api_get_prefs(actor: OptionalUser = None) -> dict[str, Any]:
+    return {"ok": True, "prefs": _load_prefs(), "viewer": actor}
+
+
+@app.put("/api/prefs")
+def api_put_prefs(body: PrefsBody, actor: AuthUser) -> dict[str, Any]:
+    import json
+
+    prefs = _load_prefs()
+    patch = body.model_dump(exclude_none=True)
+    allowed_themes = {"cyber", "deep", "aurora", "plain"}
+    allowed_density = {"comfortable", "compact"}
+    if "bg_theme" in patch and patch["bg_theme"] not in allowed_themes:
+        raise HTTPException(status_code=400, detail="无效背景主题")
+    if "card_density" in patch and patch["card_density"] not in allowed_density:
+        raise HTTPException(status_code=400, detail="无效卡片密度")
+    prefs.update(patch)
+    set_meta("ui_prefs", json.dumps(prefs, ensure_ascii=False))
+    audit("ui_prefs_update", actor=actor or "unknown", detail=prefs)
+    return {"ok": True, "prefs": prefs, "message": "个性化设置已保存"}
 
 
 # ── Logs ───────────────────────────────────────────────────
