@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.0",
+  version: "0.4.1",
   tab: "overview",
   needsSetup: false,
   containers: [],
@@ -201,11 +201,40 @@ function setSidebarOpen(open) {
   const sb = $("#sidebar");
   const bd = $("#sidebar-backdrop");
   if (!sb) return;
-  sb.classList.toggle("open", open);
-  if (bd) bd.hidden = !open;
+  sb.classList.toggle("open", !!open);
+  if (bd) {
+    bd.classList.toggle("show", !!open);
+    // keep [hidden] in sync so CSS [hidden] rule always wins when closed
+    if (open) {
+      bd.hidden = false;
+      bd.removeAttribute("hidden");
+    } else {
+      bd.hidden = true;
+      bd.setAttribute("hidden", "");
+    }
+  }
+  document.body.classList.toggle("sidebar-open", !!open);
+}
+
+/** Show Compose menu only when there are real compose projects. */
+function updateComposeNavVisibility() {
+  const hasCompose = Array.isArray(state.compose) && state.compose.length > 0;
+  const nav = document.querySelector('#main-tabs .nav-item[data-tab="compose"]');
+  if (nav) {
+    nav.hidden = !hasCompose;
+    nav.style.display = hasCompose ? "" : "none";
+  }
+  // if currently on compose but none available, bounce to overview
+  if (!hasCompose && state.tab === "compose") {
+    switchTab("overview");
+  }
 }
 
 function switchTab(name) {
+  // guard: cannot open compose when hidden
+  if (name === "compose" && !(state.compose && state.compose.length)) {
+    name = "overview";
+  }
   state.tab = name;
   document.querySelectorAll("#main-tabs .nav-item").forEach((t) => {
     t.classList.toggle("active", t.dataset.tab === name);
@@ -565,7 +594,12 @@ async function loadAll() {
     state.containers = containers.items || [];
     state.compose = compose.items || [];
     state.unraid = unraid.items || [];
+    updateComposeNavVisibility();
     if (prefs.prefs) applyPrefsLocal(prefs.prefs);
+    // ensure particles re-apply after load (prefs may have toggled)
+    if (window.DockerOpsParticles) {
+      window.DockerOpsParticles.applyPrefs(state.prefs);
+    }
     setAuthUI();
 
     const score = doctor.health_score ?? "--";
@@ -1478,7 +1512,12 @@ $("#login-form").addEventListener("submit", async (e) => {
 });
 
 // initial
+setSidebarOpen(false); // ensure mobile backdrop never blocks first paint
 applyPrefsLocal(state.prefs);
+if (window.DockerOpsParticles) {
+  window.DockerOpsParticles.applyPrefs(state.prefs);
+}
+updateComposeNavVisibility();
 switchTab("overview");
 loadAll();
 setInterval(loadAll, 60000);

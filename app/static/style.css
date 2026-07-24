@@ -75,25 +75,26 @@ body[data-density="compact"] .grid { gap: 0.7rem; padding: 0.85rem 1rem 1.5rem; 
 body[data-density="compact"] .card h2 { margin-bottom: 0.5rem; font-size: 0.92rem; }
 body[data-density="compact"] th, body[data-density="compact"] td { padding: 0.42rem 0.35rem; }
 
-/* Particles canvas — keep above pure bg, below UI */
+/* Particles canvas — fixed layer under UI, never captures clicks */
 #particles {
-  position: fixed;
+  position: fixed !important;
   inset: 0;
-  width: 100%;
-  height: 100%;
+  width: 100vw !important;
+  height: 100vh !important;
   z-index: 0;
-  pointer-events: none;
-  opacity: var(--particle-opacity);
+  pointer-events: none !important;
+  opacity: var(--particle-opacity, 1);
+  display: block;
 }
 
 .spotlight {
   position: fixed;
   inset: 0;
   z-index: 0;
-  pointer-events: none;
+  pointer-events: none !important;
   background: radial-gradient(
     560px circle at var(--mouse-x) var(--mouse-y),
-    rgba(108, 92, 231, 0.16),
+    rgba(108, 92, 231, 0.18),
     transparent 48%
   );
 }
@@ -102,10 +103,10 @@ body[data-density="compact"] th, body[data-density="compact"] td { padding: 0.42
   position: fixed;
   inset: 0;
   z-index: 0;
-  pointer-events: none;
+  pointer-events: none !important;
   background:
-    radial-gradient(circle at 15% 70%, rgba(0, 243, 255, 0.05), transparent 25%),
-    radial-gradient(circle at 80% 60%, rgba(108, 92, 231, 0.07), transparent 28%);
+    radial-gradient(circle at 15% 70%, rgba(0, 243, 255, 0.06), transparent 25%),
+    radial-gradient(circle at 80% 60%, rgba(108, 92, 231, 0.09), transparent 28%);
 }
 
 body.reduce-motion .spotlight,
@@ -120,6 +121,12 @@ body.reduce-motion #particles {
   display: grid;
   grid-template-columns: var(--sidebar-w) 1fr;
   min-height: 100vh;
+  background: transparent;
+  pointer-events: none; /* let empty areas show particles; re-enable on children */
+}
+
+.shell > * {
+  pointer-events: auto;
 }
 
 /* Sidebar */
@@ -304,14 +311,16 @@ a { color: var(--cyan); }
 }
 
 .card {
-  background: var(--panel);
+  background: rgba(18, 22, 32, 0.72);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: var(--card-pad);
   box-shadow: var(--shadow);
-  backdrop-filter: blur(12px);
-  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   transition: border-color 0.15s, box-shadow 0.15s;
+  position: relative;
+  z-index: 1;
 }
 
 .card:hover {
@@ -839,12 +848,20 @@ dialog::backdrop { background: rgba(2, 4, 12, 0.72); backdrop-filter: blur(4px);
   font-size: 0.82rem;
 }
 
-.mobile-only { display: none !important; }
+/* Mobile-only chrome: default hidden; never fight [hidden] */
+.mobile-only { display: none; }
 .sidebar-backdrop {
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.55);
   z-index: 25;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+.sidebar-backdrop.show {
+  pointer-events: auto;
+  opacity: 1;
 }
 
 /* Tablet */
@@ -855,8 +872,16 @@ dialog::backdrop { background: rgba(2, 4, 12, 0.72); backdrop-filter: blur(4px);
 
 /* Mobile / small tablet */
 @media (max-width: 960px) {
-  .mobile-only { display: grid !important; }
-  .shell { grid-template-columns: 1fr; }
+  .mobile-only { display: grid; }
+  /* critical: [hidden] must win over .mobile-only display */
+  .mobile-only[hidden],
+  [hidden] {
+    display: none !important;
+  }
+  .shell {
+    grid-template-columns: 1fr;
+    pointer-events: auto; /* full interactivity on mobile */
+  }
   .sidebar {
     position: fixed;
     left: 0;
@@ -864,12 +889,18 @@ dialog::backdrop { background: rgba(2, 4, 12, 0.72); backdrop-filter: blur(4px);
     bottom: 0;
     width: min(280px, 86vw);
     height: 100vh;
+    height: 100dvh;
     transform: translateX(-105%);
     transition: transform 0.2s ease;
     border-right: 1px solid var(--border);
     border-bottom: none;
+    pointer-events: none; /* closed drawer must not steal taps */
+    z-index: 30;
   }
-  .sidebar.open { transform: translateX(0); }
+  .sidebar.open {
+    transform: translateX(0);
+    pointer-events: auto;
+  }
   .sidebar-brand { position: relative; }
   .sidebar-brand .icon-btn {
     margin-left: auto;
@@ -878,13 +909,23 @@ dialog::backdrop { background: rgba(2, 4, 12, 0.72); backdrop-filter: blur(4px);
     flex-direction: column;
     flex-wrap: nowrap;
   }
-  .nav-item { width: 100%; }
+  .nav-item {
+    width: 100%;
+    min-height: 44px; /* touch target */
+    touch-action: manipulation;
+  }
+  .btn, .btn.small {
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(108, 92, 231, 0.25);
+  }
   .grid { grid-template-columns: 1fr; padding: 0.9rem 0.85rem 1.5rem; }
   .split { grid-template-columns: 1fr; }
   .top {
     flex-direction: column;
     align-items: stretch;
     padding: 0.85rem 0.9rem;
+    position: sticky;
+    z-index: 20;
   }
   .header-actions { justify-content: flex-start; }
   .mgr-cards { grid-template-columns: 1fr; }
@@ -892,18 +933,20 @@ dialog::backdrop { background: rgba(2, 4, 12, 0.72); backdrop-filter: blur(4px);
   input[type="search"].input { min-width: 0; width: 100%; }
   .toolbar { width: 100%; }
   .toolbar .input, .toolbar .select { flex: 1 1 auto; min-width: 0; }
+  /* no particle steal on mobile */
+  #particles, .spotlight, .bg-orbs {
+    pointer-events: none !important;
+  }
 }
 
 @media (max-width: 520px) {
   .score { font-size: 2.8rem; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
-  .btn.small { font-size: 0.72rem; }
-  th:nth-child(n+6), td:nth-child(n+6) {
-    /* keep actions accessible via horizontal scroll */
-  }
+  .btn.small { font-size: 0.72rem; min-height: 36px; }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .spotlight { display: none; }
   .meter-fill { transition: none; }
+  /* particles still allowed unless user opts out in 个性化 */
 }

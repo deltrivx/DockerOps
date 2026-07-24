@@ -70,8 +70,17 @@ from unraid_mgr import (
 from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.0"
+VERSION = "0.4.1"
 CHANGELOG = [
+    {
+        "version": "0.4.1",
+        "date": "2026-07-25",
+        "items": [
+            "修复手机端无法点击：侧栏遮罩 [hidden] 被 CSS 覆盖导致拦截触摸",
+            "修复 PC 粒子不可见：提高亮度/连线密度，卡片半透明露出粒子层",
+            "无 Compose 项目时自动隐藏侧栏 Compose（Unraid 无插件/纯 docker run 不显示）",
+        ],
+    },
     {
         "version": "0.4.0",
         "date": "2026-07-25",
