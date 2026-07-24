@@ -15,7 +15,7 @@ def records(limit: int = 100) -> list[dict[str, Any]]:
 
 
 def backup_container(container_id: str, actor: str | None = None) -> dict[str, Any]:
-    """Record a backup snapshot (metadata + inspect dump) before update/rollback."""
+    """Backup by manager: compose project / unraid template / raw inspect."""
     try:
         detail = get_container(container_id)
     except KeyError:
@@ -28,44 +28,70 @@ def backup_container(container_id: str, actor: str | None = None) -> dict[str, A
         )
         return {"ok": False, "record": rec, "message": "容器不存在"}
 
+    manager = detail.get("manager") or "third_party"
+    name = (detail.get("name") or container_id).lstrip("/")
+
+    if manager == "compose" and detail.get("compose_project"):
+        from compose_mgr import backup_project
+
+        result = backup_project(detail["compose_project"], actor=actor)
+        result["manager"] = "compose"
+        result["container"] = name
+        return result
+
+    if manager == "unraid":
+        from unraid_mgr import backup_template
+
+        tpl_name = detail.get("template_name") or name
+        result = backup_template(tpl_name, actor=actor)
+        result["manager"] = "unraid"
+        return result
+
+    return _backup_raw(detail, container_id, actor=actor)
+
+
+def _backup_raw(detail: dict[str, Any], container_id: str, actor: str | None = None) -> dict[str, Any]:
     settings = get_settings()
     backup_dir = Path(settings.data_dir) / "backups"
     backup_dir.mkdir(parents=True, exist_ok=True)
     ts = time.strftime("%Y%m%d-%H%M%S")
-    name = detail.get("name") or container_id
+    name = (detail.get("name") or container_id).lstrip("/")
     path = backup_dir / f"{name}-{ts}.json"
     payload = {
         "created_at": time.time(),
         "actor": actor,
+        "manager": "third_party",
         "container": detail,
-        "note": "元数据备份（inspect）。镜像层与数据卷需结合宿主机卷策略恢复。",
+        "note": "三方容器元数据备份。建议 Adopt 为 Unraid 模板或纳入 Compose 以便双方接管。",
+        "adopt_hint": "POST /api/unraid/adopt/{id}（需接管开启并挂载 templates-user）",
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-
     rec = add_ops_record(
         action="backup",
         target=name,
         status="ok",
-        detail={"path": str(path), "image": detail.get("image"), "id": detail.get("id")},
+        detail={"path": str(path), "image": detail.get("image"), "id": detail.get("id"), "manager": "third_party"},
         actor=actor,
     )
     return {
         "ok": True,
         "record": rec,
         "backup_path": str(path),
-        "message": "已写入备份元数据，可用于追溯与回滚指引。",
+        "manager": "third_party",
+        "message": "已写入三方容器备份元数据。",
     }
 
 
-def safe_update(container_id: str, image: str | None = None, actor: str | None = None) -> dict[str, Any]:
+def safe_update(
+    container_id: str,
+    image: str | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
     """
-    Safe update flow:
-    1) backup metadata
-    2) pull new image
-    3) record update intent / result
-
-    Note: full recreate is environment-specific; we record steps and pull image,
-    leaving recreate policy explicit for NAS users (compose/stack).
+    Route update by manager:
+    - compose  -> compose backup + pull + up (up needs takeover)
+    - unraid   -> template backup + pull + template recreate (recreate needs takeover)
+    - third    -> backup + pull only + adopt hint
     """
     try:
         detail = get_container(container_id)
@@ -79,23 +105,57 @@ def safe_update(container_id: str, image: str | None = None, actor: str | None =
         )
         return {"ok": False, "record": rec, "message": "容器不存在"}
 
-    name = detail.get("name") or container_id
+    manager = detail.get("manager") or "third_party"
+    name = (detail.get("name") or container_id).lstrip("/")
+
+    if manager == "compose" and detail.get("compose_project"):
+        from compose_mgr import safe_update_project
+
+        result = safe_update_project(
+            detail["compose_project"],
+            actor=actor,
+            service=detail.get("compose_service"),
+            recreate=True,
+        )
+        result["manager"] = "compose"
+        result["routed_from"] = name
+        return result
+
+    if manager == "unraid":
+        from unraid_mgr import safe_update_unraid
+
+        tpl_name = detail.get("template_name") or name
+        result = safe_update_unraid(tpl_name, actor=actor, repository=image, recreate=True)
+        result["manager"] = "unraid"
+        result["routed_from"] = name
+        return result
+
+    # third_party: pull only
+    return _safe_update_third_party(detail, container_id, image=image, actor=actor)
+
+
+def _safe_update_third_party(
+    detail: dict[str, Any],
+    container_id: str,
+    image: str | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    name = (detail.get("name") or container_id).lstrip("/")
     target_image = image or detail.get("image")
     if not target_image:
         rec = add_ops_record(
             action="update",
             target=name,
             status="failed",
-            detail={"error": "no_image"},
+            detail={"error": "no_image", "manager": "third_party"},
             actor=actor,
         )
         return {"ok": False, "record": rec, "message": "无法解析镜像名"}
 
-    backup = backup_container(container_id, actor=actor)
+    backup = _backup_raw(detail, container_id, actor=actor)
     if not backup.get("ok"):
         return {"ok": False, "message": "备份失败，已中止更新", "backup": backup}
 
-    pull_result: dict[str, Any]
     try:
         pull_result = pull_image(target_image)
         pull_ok = True
@@ -111,57 +171,89 @@ def safe_update(container_id: str, image: str | None = None, actor: str | None =
         target=name,
         status=status,
         detail={
+            "manager": "third_party",
             "image": target_image,
             "backup_path": backup.get("backup_path"),
             "pull": pull_result,
             "error": pull_err,
             "next_steps": [
-                "镜像已拉取（若成功）。",
-                "请使用原有 compose/stack 重建容器以应用新镜像。",
-                "失败时根据 backup 元数据与镜像 tag 回退。",
+                "三方容器仅执行了备份 + 拉镜像，未重建（避免破坏原部署方式）。",
+                "若在 Unraid：POST /api/unraid/adopt/{id} 生成 my-*.xml 并按模板重建（非三方）。",
+                "若在 Compose：将服务纳入 compose 项目后使用 /api/compose/projects/{name}/update。",
             ],
         },
         actor=actor,
     )
     return {
         "ok": pull_ok,
+        "manager": "third_party",
         "record": rec,
         "backup": backup,
         "pull": pull_result,
-        "message": "安全更新流程完成（备份 + 拉镜像）" if pull_ok else f"拉镜像失败：{pull_err}",
+        "message": (
+            "三方容器：已备份并拉镜像；未裸 docker run 重建。可用 Adopt/Compose 纳入正规管理。"
+            if pull_ok
+            else f"拉镜像失败：{pull_err}"
+        ),
+        "adopt_path": f"/api/unraid/adopt/{detail.get('id') or name}",
     }
 
 
 def rollback_guide(container_id: str, actor: str | None = None) -> dict[str, Any]:
-    """Record a rollback action with latest backup pointer and guidance."""
     settings = get_settings()
-    backup_dir = Path(settings.data_dir) / "backups"
     name = container_id
+    manager = "third_party"
     try:
         detail = get_container(container_id)
-        name = detail.get("name") or container_id
+        name = (detail.get("name") or container_id).lstrip("/")
+        manager = detail.get("manager") or "third_party"
     except Exception:
         detail = None
 
-    candidates = sorted(backup_dir.glob(f"{name}-*.json"), reverse=True) if backup_dir.exists() else []
-    latest = str(candidates[0]) if candidates else None
+    backup_dir = Path(settings.data_dir) / "backups"
+    latest = None
+    guide: list[str] = []
+
+    if manager == "compose" and detail and detail.get("compose_project"):
+        cdir = backup_dir / "compose"
+        project = detail["compose_project"]
+        candidates = sorted(cdir.glob(f"{project}-*"), reverse=True) if cdir.exists() else []
+        latest = str(candidates[0]) if candidates else None
+        guide = [
+            "1. 打开 compose 备份目录中的 compose 文件与 project.json。",
+            "2. 在原项目 working_dir 恢复 compose 文件（如有改动）。",
+            "3. 执行 docker compose pull && docker compose up -d（或 DockerOps 项目更新）。",
+            "4. 双方接管同一项目目录，勿另起 docker run。",
+        ]
+    elif manager == "unraid":
+        udir = backup_dir / "unraid"
+        candidates = sorted(udir.glob(f"{name}-*"), reverse=True) if udir.exists() else []
+        latest = str(candidates[0]) if candidates else None
+        guide = [
+            "1. 从备份目录恢复 my-*.xml 到 templates-user。",
+            "2. 在 Unraid Docker 页 Edit → Apply，或 DockerOps 模板更新。",
+            "3. 必须走模板重建以保持 net.unraid.docker.managed=dockerman。",
+            "4. 不要用裸 docker run，否则会变成三方。",
+        ]
+    else:
+        candidates = sorted(backup_dir.glob(f"{name}-*.json"), reverse=True) if backup_dir.exists() else []
+        latest = str(candidates[0]) if candidates else None
+        guide = [
+            "1. 打开 latest_backup JSON，确认原 image / 挂载 / 端口。",
+            "2. 建议先 Adopt 为 Unraid 模板或写入 compose，再回滚。",
+            "3. 避免长期以三方方式裸跑。",
+        ]
+
     rec = add_ops_record(
         action="rollback",
         target=name,
         status="recorded" if latest else "no_backup",
-        detail={
-            "latest_backup": latest,
-            "guide": [
-                "1. 打开 latest_backup JSON，确认原 image / 挂载 / 端口。",
-                "2. 将 compose 或 run 参数回退到备份中的镜像 tag。",
-                "3. 重建容器并验证 Doctor 健康分。",
-                "4. 数据卷本身通常不在镜像内，请勿误删命名卷。",
-            ],
-        },
+        detail={"latest_backup": latest, "manager": manager, "guide": guide},
         actor=actor,
     )
     return {
         "ok": bool(latest),
+        "manager": manager,
         "record": rec,
         "latest_backup": latest,
         "message": "已记录回滚指引" if latest else "未找到可用备份，请先执行 backup",

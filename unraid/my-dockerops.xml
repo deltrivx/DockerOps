@@ -1,0 +1,37 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>dockerops</Name>
+  <Repository>ghcr.io/deltrivx/dockerops:latest</Repository>
+  <Registry>https://ghcr.io</Registry>
+  <Network>bridge</Network>
+  <MyIP/>
+  <Shell>sh</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/deltrivx/DockerOps</Support>
+  <Project>https://github.com/deltrivx/DockerOps</Project>
+  <Overview>DockerOps — 面向 NAS 的 Docker 运维平台。Compose 双方接管、Unraid 模板安全更新、Doctor 诊断与监控。镜像仅由 GitHub Actions 远程构建。</Overview>
+  <Category>Tools:System:Utilities</Category>
+  <WebUI>http://[IP]:[PORT:8080]/</WebUI>
+  <TemplateURL/>
+  <Icon>https://raw.githubusercontent.com/deltrivx/DockerOps/main/unraid/icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <CPUset/>
+  <DateInstalled/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires/>
+  <Config Name="WebUI Port" Target="8080" Default="8080" Mode="tcp" Description="DockerOps Web / API 端口" Type="Port" Display="always" Required="true" Mask="false">8080</Config>
+  <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/dockerops" Mode="rw" Description="数据目录（SQLite / 备份 / 报告）" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dockerops</Config>
+  <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Docker 引擎套接字。只读运维可改为 ro；完整接管需 rw" Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
+  <Config Name="Unraid Templates" Target="/unraid/templates-user" Default="/boot/config/plugins/dockerMan/templates-user" Mode="rw" Description="dockerMan 用户模板目录，用于 Unraid 双方接管（非三方）" Type="Path" Display="always" Required="false" Mask="false">/boot/config/plugins/dockerMan/templates-user</Config>
+  <Config Name="Admin User" Target="DOCKEROPS_ADMIN_USER" Default="admin" Mode="" Description="管理员用户名" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
+  <Config Name="Admin Password" Target="DOCKEROPS_ADMIN_PASSWORD" Default="dockerops" Mode="" Description="管理员密码（请修改）" Type="Variable" Display="always" Required="true" Mask="true">dockerops</Config>
+  <Config Name="Takeover Enabled" Target="DOCKEROPS_TAKEOVER_ENABLED" Default="false" Mode="" Description="true=完整接管（compose up/down、模板重建、Adopt）" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Compose Enabled" Target="DOCKEROPS_COMPOSE_ENABLED" Default="true" Mode="" Description="启用 Compose 项目发现" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Compose Project Dirs" Target="DOCKEROPS_COMPOSE_PROJECT_DIRS" Default="" Mode="" Description="额外扫描的 compose 目录，容器内路径，冒号分隔" Type="Variable" Display="advanced" Required="false" Mask="false"/>
+  <Config Name="Unraid Enabled" Target="DOCKEROPS_UNRAID_ENABLED" Default="true" Mode="" Description="启用 Unraid 模板管理" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Unraid Templates Path" Target="DOCKEROPS_UNRAID_TEMPLATES_USER" Default="/unraid/templates-user" Mode="" Description="容器内模板路径" Type="Variable" Display="advanced" Required="false" Mask="false">/unraid/templates-user</Config>
+  <Config Name="TZ" Target="TZ" Default="Asia/Shanghai" Mode="" Description="时区" Type="Variable" Display="advanced" Required="false" Mask="false">Asia/Shanghai</Config>
+  <Config Name="managed" Target="net.unraid.docker.managed" Default="dockerman" Mode="" Description="保持 Unraid DockerMan 管理" Type="Label" Display="advanced" Required="false" Mask="false">dockerman</Config>
+</Container>

@@ -154,6 +154,13 @@ th { color: var(--muted); font-weight: 600; font-size: 0.8rem; }
 .pill.running, .pill.healthy { color: var(--ok); }
 .pill.exited, .pill.unhealthy, .pill.dead { color: var(--bad); }
 .pill.restarting, .pill.starting { color: var(--warn); }
+.pill.mgr-compose { color: #38bdf8; border-color: #0e7490; }
+.pill.mgr-unraid { color: #f472b6; border-color: #9d174d; }
+.pill.mgr-third_party { color: #fbbf24; border-color: #92400e; }
+.btn.danger { border-color: #7f1d1d; color: #fca5a5; }
+.btn.danger:hover { border-color: var(--bad); }
+.small, .mono.small { font-size: 0.8rem; }
+.actions { display: flex; flex-wrap: wrap; gap: 0.3rem; }
 
 .findings { display: grid; gap: 0.55rem; }
 .finding {

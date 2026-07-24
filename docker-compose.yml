@@ -18,9 +18,19 @@ services:
       DOCKEROPS_ADMIN_PASSWORD: ${DOCKEROPS_ADMIN_PASSWORD:-dockerops}
       DOCKEROPS_API_TOKEN: ${DOCKEROPS_API_TOKEN:-}
       DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKEROPS_TAKEOVER_ENABLED: ${DOCKEROPS_TAKEOVER_ENABLED:-false}
+      DOCKEROPS_COMPOSE_ENABLED: ${DOCKEROPS_COMPOSE_ENABLED:-true}
+      DOCKEROPS_COMPOSE_PROJECT_DIRS: ${DOCKEROPS_COMPOSE_PROJECT_DIRS:-}
+      DOCKEROPS_UNRAID_ENABLED: ${DOCKEROPS_UNRAID_ENABLED:-true}
+      DOCKEROPS_UNRAID_TEMPLATES_USER: /unraid/templates-user
     volumes:
       - dockerops-data:/data
+      # 只读运维默认 ro；完整接管请改为 rw 或使用 takeover profile
       - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Unraid：取消注释以双方接管模板
+      # - /boot/config/plugins/dockerMan/templates-user:/unraid/templates-user
+      # Compose 工程目录（可选）
+      # - /path/to/compose-projects:/compose:ro
     healthcheck:
       test:
         [
@@ -33,6 +43,40 @@ services:
       timeout: 8s
       retries: 3
       start_period: 25s
+
+  # 完整接管示例：docker compose --profile takeover up -d
+  dockerops-takeover:
+    profiles: ["takeover"]
+    image: ghcr.io/deltrivx/dockerops:latest
+    pull_policy: always
+    container_name: dockerops
+    restart: unless-stopped
+    ports:
+      - "${DOCKEROPS_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DOCKEROPS_HOST: 0.0.0.0
+      DOCKEROPS_PORT: 8080
+      DOCKEROPS_DATA_DIR: /data
+      DOCKEROPS_ADMIN_USER: ${DOCKEROPS_ADMIN_USER:-admin}
+      DOCKEROPS_ADMIN_PASSWORD: ${DOCKEROPS_ADMIN_PASSWORD:-dockerops}
+      DOCKEROPS_API_TOKEN: ${DOCKEROPS_API_TOKEN:-}
+      DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKEROPS_TAKEOVER_ENABLED: "true"
+      DOCKEROPS_COMPOSE_ENABLED: "true"
+      DOCKEROPS_COMPOSE_PROJECT_DIRS: ${DOCKEROPS_COMPOSE_PROJECT_DIRS:-/compose}
+      DOCKEROPS_UNRAID_ENABLED: "true"
+      DOCKEROPS_UNRAID_TEMPLATES_USER: /unraid/templates-user
+    volumes:
+      - dockerops-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Unraid 模板双方接管（按需）
+      # - /boot/config/plugins/dockerMan/templates-user:/unraid/templates-user
+      # - /boot/config/docker.cfg:/unraid/docker.cfg:ro
+      # Compose 工程双方接管（按需）
+      # - /path/to/compose-projects:/compose
 
 volumes:
   dockerops-data:

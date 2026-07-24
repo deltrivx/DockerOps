@@ -10,10 +10,21 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DOCKEROPS_DATA_DIR=/data \
     DEBIAN_FRONTEND=noninteractive
 
+# System + Docker CLI (for `docker compose` takeover against mounted socket)
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl tzdata \
+    && apt-get install -y --no-install-recommends ca-certificates curl tzdata gnupg \
+    && install -m 0755 -d /etc/apt/keyrings \
+    && curl -fsSL https://download.docker.com/linux/debian/gpg \
+         | gpg --dearmor -o /etc/apt/keyrings/docker.gpg \
+    && chmod a+r /etc/apt/keyrings/docker.gpg \
+    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian bookworm stable" \
+         > /etc/apt/sources.list.d/docker.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends docker-ce-cli docker-compose-plugin \
     && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
     && echo $TZ > /etc/timezone \
+    && docker --version \
+    && docker compose version \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -24,12 +35,11 @@ RUN pip install --upgrade pip \
 
 COPY app/ /app/
 
-RUN mkdir -p /data \
+RUN mkdir -p /data /unraid/templates-user \
     && useradd --create-home --shell /bin/bash --uid 1000 appuser \
     && chown -R appuser:appuser /app /data
 
-# Docker socket is typically root-owned; run as root for socket access by default.
-# Prefer read-only socket mount from the host.
+# Docker socket is typically root-owned; run as root for socket + compose CLI.
 USER root
 
 EXPOSE 8080

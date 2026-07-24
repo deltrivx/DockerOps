@@ -16,6 +16,7 @@
       </div>
     </div>
     <div class="header-actions">
+      <div id="takeover-badge" class="badge">接管: --</div>
       <div id="auth-state" class="muted">未登录（只读）</div>
       <button id="btn-refresh" class="btn">刷新</button>
       <button id="btn-login" class="btn primary">登录</button>
@@ -31,7 +32,7 @@
     </section>
 
     <section class="card">
-      <h2>引擎 / 摘要</h2>
+      <h2>管理源 / 引擎</h2>
       <pre id="engine-info" class="mono">加载中…</pre>
     </section>
 
@@ -45,6 +46,7 @@
           <thead>
             <tr>
               <th>名称</th>
+              <th>管理源</th>
               <th>镜像</th>
               <th>状态</th>
               <th>健康</th>
@@ -53,7 +55,55 @@
             </tr>
           </thead>
           <tbody id="container-rows">
-            <tr><td colspan="6" class="muted">加载中…</td></tr>
+            <tr><td colspan="7" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <div class="row-between">
+        <h2>Compose 项目</h2>
+        <span id="compose-count" class="muted"></span>
+      </div>
+      <p class="muted small">与原系统共享同一 compose 工程；开启接管后可 up/down，双方均可修改部署。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>项目</th>
+              <th>服务</th>
+              <th>运行</th>
+              <th>目录 / 文件</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="compose-rows">
+            <tr><td colspan="5" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card wide">
+      <div class="row-between">
+        <h2>Unraid 模板</h2>
+        <span id="unraid-count" class="muted"></span>
+      </div>
+      <p class="muted small">按 dockerMan <code>my-*.xml</code> 模板备份/升级（非 docker run 拼接），保持 dockerman 管理，避免三方。</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>Repository</th>
+              <th>网络</th>
+              <th>容器状态</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="unraid-rows">
+            <tr><td colspan="5" class="muted">加载中…</td></tr>
           </tbody>
         </table>
       </div>
@@ -99,7 +149,7 @@
   </dialog>
 
   <footer class="foot muted">
-    Web 控制台以只读为主 · 写操作走 API ·
+    Compose / Unraid 双方接管 · 写操作需登录 · 破坏性操作需开启接管 ·
     <a href="/docs" target="_blank" rel="noopener">Swagger</a>
   </footer>
 
