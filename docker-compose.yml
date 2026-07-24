@@ -1,0 +1,38 @@
+services:
+  dockerops:
+    image: ghcr.io/deltrivx/dockerops:latest
+    # 镜像由 GitHub Actions 远程构建并推送到 GHCR；本地 compose 默认 pull，不 build。
+    pull_policy: always
+    container_name: dockerops
+    restart: unless-stopped
+    ports:
+      - "${DOCKEROPS_PORT:-8080}:8080"
+    env_file:
+      - .env
+    environment:
+      TZ: ${TZ:-Asia/Shanghai}
+      DOCKEROPS_HOST: 0.0.0.0
+      DOCKEROPS_PORT: 8080
+      DOCKEROPS_DATA_DIR: /data
+      DOCKEROPS_ADMIN_USER: ${DOCKEROPS_ADMIN_USER:-admin}
+      DOCKEROPS_ADMIN_PASSWORD: ${DOCKEROPS_ADMIN_PASSWORD:-dockerops}
+      DOCKEROPS_API_TOKEN: ${DOCKEROPS_API_TOKEN:-}
+      DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
+    volumes:
+      - dockerops-data:/data
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 25s
+
+volumes:
+  dockerops-data:
