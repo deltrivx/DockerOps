@@ -11,8 +11,8 @@ DockerOps 是一款专为 NAS、家庭服务器和轻量运维场景设计的 Do
 
 目标很明确：让 Docker 更新更安全、问题排查更简单、日常运维更省心。
 
-> **v0.3**：日常运维全覆盖（容器启停/日志/镜像/网络/卷/系统清理/事件），可在 NAS 场景替代 Portainer-CE 的日常使用；保留 Doctor / 安全更新差异化。  
-> 管理源：Compose / Unraid / 三方。**完整接管**默认关闭；开启后与 Unraid 模板或飞牛/通用 Compose **引擎级双方接管**。镜像仅由 **GitHub Actions → GHCR** 构建，禁止本机构建再上传。
+> **v0.3.1**：首次使用 **管理员设置向导**（也可 `DOCKEROPS_ADMIN_USER` / `DOCKEROPS_ADMIN_PASSWORD` 环境变量预置）；日常运维全覆盖（启停/日志/镜像/网络/卷/系统清理/事件）；飞牛 **专业 FPK** 作为 Release 附件。  
+> 管理源：Compose / Unraid / 三方。**完整接管**默认关闭。镜像仅由 **GitHub Actions → GHCR** 构建，禁止本机构建再上传。
 
 ---
 
@@ -193,7 +193,8 @@ docker run -d \
 
 打开：`http://<host>:8080/`
 
-默认账号：`admin` / 环境变量 `DOCKEROPS_ADMIN_PASSWORD`（未设置时为 `dockerops`）
+**首次使用**：打开 Web 界面按向导设置管理员用户名与密码。  
+若启动时设置了环境变量 `DOCKEROPS_ADMIN_PASSWORD`（≥6 位），将自动创建管理员并跳过向导（用户名默认 `admin` 或 `DOCKEROPS_ADMIN_USER`）。
 
 ### Docker Compose
 
@@ -224,8 +225,8 @@ Swagger：`http://<host>:8080/docs`
 | `DOCKEROPS_HOST` | `0.0.0.0` | 监听地址 |
 | `DOCKEROPS_PORT` | `8080` | 监听端口 |
 | `DOCKEROPS_DATA_DIR` | `/data` | 数据目录（SQLite / 报告 / 备份元数据） |
-| `DOCKEROPS_ADMIN_USER` | `admin` | 管理员用户名 |
-| `DOCKEROPS_ADMIN_PASSWORD` | `dockerops` | 管理员密码（务必修改） |
+| `DOCKEROPS_ADMIN_USER` | `admin` | 预置管理员用户名（配合 PASSWORD 跳过向导） |
+| `DOCKEROPS_ADMIN_PASSWORD` | （空） | **仅当进程环境显式设置**时启动自动创建管理员并跳过向导；否则首次打开 Web 完成设置 |
 | `DOCKEROPS_API_TOKEN` | （空） | 可选固定 API Token；为空则登录后颁发会话 Token |
 | `DOCKEROPS_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker 引擎地址 |
 | `DOCKEROPS_PLATFORM` | `auto` | `auto` / `unraid` / `fnos` / `generic` |
@@ -284,7 +285,10 @@ docker compose --profile takeover up -d
 | `GET` | `/api/health` | 服务健康 |
 | `GET` | `/api/platform` | 平台探测与挂载建议 |
 | `GET` | `/api/managers/summary` | 管理源统计 / 接管状态 |
+| `GET` | `/api/auth/status` | 是否需要首次设置 |
+| `POST` | `/api/auth/setup` | 首次创建管理员（仅未初始化时） |
 | `POST` | `/api/auth/login` | 登录 |
+| `POST` | `/api/auth/change-password` | 修改密码 |
 | `GET` | `/api/containers` | 容器列表（含 manager） |
 | `POST` | `/api/containers/{id}/start\|stop\|restart\|pause\|unpause\|kill` | 生命周期（登录） |
 | `DELETE` | `/api/containers/{id}` | 删除（需接管） |
@@ -322,7 +326,12 @@ ghcr.io/deltrivx/dockerops
 - `sha-<commit>`：按提交
 - `vX.Y.Z`：语义化版本 tag
 
-请勿依赖本机构建再上传；以 Actions / GHCR 产物为准。
+推送 `v*` tag 时额外：
+
+- 构建飞牛 **FPK**（`dist/dockerops-<ver>-fnos.fpk`）
+- 创建 **GitHub Release** 并附带 FPK / checksum / meta.json
+
+请勿依赖本机构建 Docker 镜像再上传；以 Actions / GHCR 产物为准。FPK 为安装包装配（不含镜像层），可在 CI 或本地 `./scripts/build_fnos_fpk.sh` 生成。
 
 ---
 
@@ -331,16 +340,19 @@ ghcr.io/deltrivx/dockerops
 ```text
 DockerOps/
 ├── app/
-│   ├── main.py              # FastAPI 入口 v0.3
+│   ├── main.py              # FastAPI 入口 v0.3.1
 │   ├── host_platform.py     # Unraid / 飞牛 / generic 探测
 │   ├── docker_resources.py  # 日常资源运维
 │   ├── logs_stream.py · events_stream.py
 │   ├── manager.py · compose_mgr.py · unraid_mgr.py · ops.py
 │   ├── docker_client.py · doctor.py · monitor.py · auth.py · db.py
 │   ├── static/ · templates/
-├── unraid/my-dockerops.xml
-├── fnos/docker-compose.yml · fnos/README.md
-├── .github/workflows/       # 远程构建 GHCR
+├── unraid/my-dockerops.xml · icon.png
+├── fnos/
+│   ├── docker-compose.yml · README.md
+│   └── fpk/                 # 飞牛专业安装包源（manifest/图标/向导/启停）
+├── scripts/build_fnos_fpk.sh
+├── .github/workflows/       # GHCR 镜像 + FPK Release
 ├── Dockerfile
 ├── docker-compose.yml
 └── README.md
@@ -368,6 +380,8 @@ DockerOps/
 - [x] 可选完整接管开关
 - [x] 日常运维资源 API + UI（生命周期/日志/镜像/网络/卷/系统）
 - [x] 平台探测（Unraid / 飞牛）与飞牛引擎级部署配方
+- [x] 首次管理员设置向导 + 环境变量预置
+- [x] 飞牛专业 FPK 安装包 + Release 附件
 - [ ] Compose 栈文件编辑 / 更新检测
 - [ ] 一键回滚执行（当前为指引）
 - [ ] Web 终端（可选）

@@ -1,0 +1,16 @@
+#!/bin/bash
+### Called after uninstall — optional data purge based on wizard_data_action.
+
+set -u
+ACTION="${wizard_data_action:-keep}"
+DATA_ROOT="${TRIM_DATA_SHARE_PATHS%%:*}"
+
+if [ "${ACTION}" = "delete" ] && [ -n "${DATA_ROOT}" ] && [ -d "${DATA_ROOT}" ]; then
+  # Only remove contents under dockerops data share
+  case "${DATA_ROOT}" in
+    *dockerops*)
+      rm -rf "${DATA_ROOT:?}/"* 2>/dev/null || true
+      ;;
+  esac
+fi
+exit 0

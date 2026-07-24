@@ -1,0 +1,23 @@
+#!/bin/bash
+### Called after install — normalize icons into package root.
+
+set -u
+APP_ROOT="${TRIM_APPDEST:-/var/apps/dockerops/target}"
+PKG_ROOT="$(dirname "${APP_ROOT}")"
+
+SRC256="${APP_ROOT}/ui/images/icon_256.png"
+SRC64="${APP_ROOT}/ui/images/icon_64.png"
+
+if [ -f "${SRC256}" ]; then
+  cp -f "${SRC256}" "${PKG_ROOT}/ICON.PNG" 2>/dev/null || true
+  cp -f "${SRC256}" "${PKG_ROOT}/ICON_256.PNG" 2>/dev/null || true
+  cp -f "${SRC256}" "${APP_ROOT}/ICON.PNG" 2>/dev/null || true
+  cp -f "${SRC256}" "${APP_ROOT}/ICON_256.PNG" 2>/dev/null || true
+fi
+if [ -f "${SRC64}" ]; then
+  cp -f "${SRC64}" "${APP_ROOT}/ui/images/icon_64.png" 2>/dev/null || true
+fi
+
+# Ensure scripts executable
+chmod +x "${APP_ROOT}/cmd/"* 2>/dev/null || true
+exit 0

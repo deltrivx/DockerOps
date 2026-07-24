@@ -10,7 +10,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
 
-from auth import AuthUser, OptionalUser, login, logout
+from auth import (
+    AuthUser,
+    OptionalUser,
+    auth_status,
+    bootstrap_from_env,
+    change_password,
+    complete_setup,
+    login,
+    logout,
+)
 from compose_mgr import (
     backup_project,
     get_project,
@@ -56,14 +65,14 @@ from unraid_mgr import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 settings = get_settings()
 init_db()
 
 app = FastAPI(
     title="DockerOps",
     description=(
-        "面向 NAS 的 Docker 运维平台 — 日常运维（生命周期/日志/镜像/网络/卷）、"
+        "面向 NAS 的 Docker 运维平台 — 首次设置向导、日常运维（生命周期/日志/镜像/网络/卷）、"
         "Compose 与 Unraid/飞牛引擎级双方接管、安全更新、Doctor 诊断。"
     ),
     version=VERSION,
@@ -78,6 +87,18 @@ app.mount("/static", StaticFiles(directory=str(APP_DIR / "static")), name="stati
 class LoginBody(BaseModel):
     username: str
     password: str
+
+
+class SetupBody(BaseModel):
+    username: str = Field(..., min_length=3, max_length=32, description="管理员用户名")
+    password: str = Field(..., min_length=6, max_length=128, description="管理员密码")
+    password_confirm: str = Field(..., min_length=6, max_length=128, description="确认密码")
+
+
+class ChangePasswordBody(BaseModel):
+    old_password: str
+    new_password: str = Field(..., min_length=6, max_length=128)
+    new_password_confirm: str
 
 
 class UpdateBody(BaseModel):
@@ -148,6 +169,7 @@ def _perm_http(fn, *args, **kwargs):
 def _startup() -> None:
     settings.ensure_dirs()
     refresh_template_name_cache()
+    boot = bootstrap_from_env()
     plat = {}
     try:
         plat = platform_info()
@@ -162,6 +184,8 @@ def _startup() -> None:
             "resource_apis": settings.resource_apis,
             "platform": plat.get("platform"),
             "unraid_templates": templates_available(),
+            "bootstrap": boot,
+            "needs_setup": auth_status().get("needs_setup"),
         },
     )
 
@@ -209,6 +233,18 @@ def api_managers_summary(actor: OptionalUser = None) -> dict[str, Any]:
     return summary
 
 
+@app.get("/api/auth/status")
+def api_auth_status() -> dict[str, Any]:
+    return auth_status()
+
+
+@app.post("/api/auth/setup")
+def api_auth_setup(body: SetupBody) -> dict[str, Any]:
+    if body.password != body.password_confirm:
+        raise HTTPException(status_code=400, detail="两次输入的密码不一致")
+    return complete_setup(body.username, body.password)
+
+
 @app.post("/api/auth/login")
 def api_login(body: LoginBody) -> dict[str, Any]:
     return login(body.username, body.password)
@@ -220,6 +256,15 @@ def api_logout(request: Request, actor: OptionalUser) -> dict[str, Any]:
     if auth.lower().startswith("bearer "):
         logout(auth.split(" ", 1)[1].strip())
     return {"ok": True, "actor": actor}
+
+
+@app.post("/api/auth/change-password")
+def api_change_password(body: ChangePasswordBody, actor: AuthUser) -> dict[str, Any]:
+    if body.new_password != body.new_password_confirm:
+        raise HTTPException(status_code=400, detail="两次输入的新密码不一致")
+    if actor == "api-token":
+        raise HTTPException(status_code=400, detail="API Token 不能修改密码，请使用管理员账号登录")
+    return change_password(actor, body.old_password, body.new_password)
 
 
 @app.get("/api/containers")
@@ -597,7 +642,7 @@ def index(request: Request) -> HTMLResponse:
         {
             "request": request,
             "title": "DockerOps",
-            "subtitle": "NAS 日常运维 · 取代 Portainer 场景 · Tower / 飞牛引擎级接管",
+            "subtitle": "NAS 日常运维 · 首次设置向导 · Tower / 飞牛引擎级接管",
         },
     )
 

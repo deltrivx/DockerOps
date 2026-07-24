@@ -4,6 +4,7 @@ const state = {
   takeover: false,
   platform: "generic",
   tab: "overview",
+  needsSetup: false,
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -69,7 +70,10 @@ function escapeHtml(s) {
 
 function setAuthUI() {
   const el = $("#auth-state");
-  if (state.token) {
+  if (state.needsSetup) {
+    el.textContent = "需要首次设置";
+    $("#btn-login").textContent = "设置管理员";
+  } else if (state.token) {
     el.textContent = `已登录：${state.username || "user"}`;
     $("#btn-login").textContent = "退出";
   } else {
@@ -130,9 +134,31 @@ function switchTab(name) {
   }
 }
 
+async function checkSetup() {
+  try {
+    const st = await api("/api/auth/status");
+    state.needsSetup = !!st.needs_setup;
+    setAuthUI();
+    if (state.needsSetup) {
+      // Clear any stale token from previous install
+      state.token = "";
+      state.username = "";
+      localStorage.removeItem("dockerops_token");
+      localStorage.removeItem("dockerops_user");
+      const dlg = $("#setup-dialog");
+      if (dlg && !dlg.open) dlg.showModal();
+    }
+    return st;
+  } catch (e) {
+    state.needsSetup = false;
+    return null;
+  }
+}
+
 async function loadAll() {
   setAuthUI();
   try {
+    await checkSetup();
     const [doctor, containers, ops, health, summary, compose, unraid, platform, events] =
       await Promise.all([
         api("/api/doctor"),
@@ -752,6 +778,11 @@ $("#btn-sys-prune").addEventListener("click", async () => {
 });
 
 $("#btn-login").addEventListener("click", async () => {
+  if (state.needsSetup) {
+    $("#setup-error").hidden = true;
+    $("#setup-dialog").showModal();
+    return;
+  }
   if (state.token) {
     try {
       await api("/api/auth/logout", { method: "POST" });
@@ -769,6 +800,41 @@ $("#btn-login").addEventListener("click", async () => {
 
 $("#login-cancel").addEventListener("click", () => $("#login-dialog").close());
 
+$("#setup-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const fd = new FormData(e.target);
+  const password = fd.get("password");
+  const password_confirm = fd.get("password_confirm");
+  if (password !== password_confirm) {
+    const el = $("#setup-error");
+    el.hidden = false;
+    el.textContent = "两次输入的密码不一致";
+    return;
+  }
+  try {
+    const data = await api("/api/auth/setup", {
+      method: "POST",
+      body: JSON.stringify({
+        username: fd.get("username"),
+        password,
+        password_confirm,
+      }),
+    });
+    state.token = data.access_token;
+    state.username = data.username;
+    state.needsSetup = false;
+    localStorage.setItem("dockerops_token", state.token);
+    localStorage.setItem("dockerops_user", state.username);
+    $("#setup-dialog").close();
+    setAuthUI();
+    loadAll();
+  } catch (err) {
+    const el = $("#setup-error");
+    el.hidden = false;
+    el.textContent = err.message || "设置失败";
+  }
+});
+
 $("#login-form").addEventListener("submit", async (e) => {
   e.preventDefault();
   const fd = new FormData(e.target);
@@ -782,6 +848,7 @@ $("#login-form").addEventListener("submit", async (e) => {
     });
     state.token = data.access_token;
     state.username = data.username;
+    state.needsSetup = false;
     localStorage.setItem("dockerops_token", state.token);
     localStorage.setItem("dockerops_user", state.username);
     $("#login-dialog").close();

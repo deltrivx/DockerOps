@@ -1,5 +1,5 @@
-# Remote-only image build & push to GHCR.
-# Constraint: do not build locally and upload; this workflow is the sole publish path.
+# Remote-only image build & push to GHCR + FnOS FPK release artifacts.
+# Constraint: do not build Docker images locally and upload; this workflow is the sole image publish path.
 name: Docker Publish (GHCR)
 
 on:
@@ -9,19 +9,20 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
   packages: write
   attestations: write
   id-token: write
 
 env:
   REGISTRY: ghcr.io
-  # GHCR requires lowercase image names
   IMAGE_NAME: deltrivx/dockerops
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -38,6 +39,22 @@ jobs:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            V="${GITHUB_REF_NAME#v}"
+          else
+            V="0.3.1"
+            # prefer version from main.py if present
+            if grep -q 'VERSION = "' app/main.py; then
+              V=$(python3 -c "import re; print(re.search(r'VERSION\s*=\s*\"([^\"]+)\"', open('app/main.py').read()).group(1))")
+            fi
+            V="${V}+sha.${GITHUB_SHA::7}"
+          fi
+          echo "version=${V}" >> "$GITHUB_OUTPUT"
+          echo "Resolved version=${V}"
 
       - name: Extract metadata (tags, labels)
         id: meta
@@ -65,3 +82,71 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
+
+  build-fnos-fpk:
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build FPK
+        env:
+          DOCKEROPS_VERSION: ${{ needs.build-and-push.outputs.version }}
+        run: |
+          chmod +x scripts/build_fnos_fpk.sh
+          # strip +sha.xxx for stable filename on tags; keep full for branch
+          export DOCKEROPS_VERSION
+          ./scripts/build_fnos_fpk.sh
+          ls -la dist/
+
+      - name: Upload FPK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dockerops-fnos-fpk
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    needs: [build-and-push, build-fnos-fpk]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build FPK for release
+        env:
+          DOCKEROPS_VERSION: ${{ needs.build-and-push.outputs.version }}
+        run: |
+          chmod +x scripts/build_fnos_fpk.sh
+          ./scripts/build_fnos_fpk.sh
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            dist/*
+          body: |
+            ## DockerOps ${{ needs.build-and-push.outputs.version }}
+
+            ### 镜像（GHCR，仅 Actions 远程构建）
+            - `ghcr.io/deltrivx/dockerops:latest`
+            - `ghcr.io/deltrivx/dockerops:${{ needs.build-and-push.outputs.version }}`
+
+            ### 飞牛专用 FPK
+            下载附件 `dockerops-*-fnos.fpk`，在飞牛 **应用中心 → 手动安装**。
+
+            - 安装向导可配置端口、完整接管、预置管理员账号
+            - 未预置密码时，首次打开 Web 界面完成管理员设置
+            - 镜像拉取自 GHCR：`ghcr.io/deltrivx/dockerops`
+
+            ### 首次使用
+            1. 安装并启动应用
+            2. 浏览器访问 `http://<飞牛IP>:<端口>`
+            3. 设置管理员用户名/密码（或安装时已预置）
+
+            文档：https://github.com/deltrivx/DockerOps
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

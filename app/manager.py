@@ -120,7 +120,7 @@ def managers_summary(containers: list[dict[str, Any]]) -> dict[str, Any]:
 
     return {
         "ok": True,
-        "version": "0.3.0",
+        "version": "0.3.1",
         "platform": host_platform,
         "takeover_enabled": settings.takeover_enabled,
         "resource_apis": settings.resource_apis,

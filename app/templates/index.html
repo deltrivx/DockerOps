@@ -248,6 +248,21 @@
     </section>
   </main>
 
+  <dialog id="setup-dialog">
+    <form method="dialog" id="setup-form">
+      <h3>首次使用 · 设置管理员</h3>
+      <p class="muted small">尚未配置管理员账号。请设置用户名与密码（也可通过环境变量 <code>DOCKEROPS_ADMIN_USER</code> / <code>DOCKEROPS_ADMIN_PASSWORD</code> 预置，容器启动时自动完成）。</p>
+      <label>用户名 <input name="username" value="admin" minlength="3" maxlength="32" required /></label>
+      <label>密码 <input name="password" type="password" minlength="6" required /></label>
+      <label>确认密码 <input name="password_confirm" type="password" minlength="6" required /></label>
+      <p id="setup-error" class="error" hidden></p>
+      <div class="row-between">
+        <span class="muted small">密码至少 6 位</span>
+        <button type="submit" class="btn primary">完成设置并登录</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="login-dialog">
     <form method="dialog" id="login-form">
       <h3>登录 DockerOps</h3>
@@ -270,7 +285,7 @@
   </dialog>
 
   <footer class="foot muted">
-    v0.3 · 日常运维全覆盖 · Tower 模板 / 飞牛 Compose 引擎级接管 ·
+    v0.3.1 · 首次设置向导 · 日常运维全覆盖 · Tower / 飞牛 FPK ·
     删除与 prune 需开启接管 ·
     <a href="/docs" target="_blank" rel="noopener">Swagger</a>
   </footer>

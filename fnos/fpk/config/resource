@@ -1,0 +1,12 @@
+{
+    "data-share": {
+        "shares": [
+            {
+                "name": "dockerops",
+                "permission": {
+                    "rw": ["dockerops"]
+                }
+            }
+        ]
+    }
+}

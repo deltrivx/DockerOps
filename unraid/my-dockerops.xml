@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.3 — 面向 NAS 的 Docker 运维平台。日常运维（启停/日志/镜像/网络/卷）可替代 Portainer 场景；Unraid 模板安全更新保持 dockerman；Compose 与飞牛引擎级双方接管。镜像仅由 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.3.1 — 面向 NAS 的 Docker 运维平台。日常运维（启停/日志/镜像/网络/卷）可替代 Portainer 场景；Unraid 模板安全更新保持 dockerman；Compose 与飞牛引擎级双方接管。镜像仅由 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>

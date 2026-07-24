@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>DockerOps</title>
+  <style>
+    body { margin: 0; font-family: system-ui, "PingFang SC", sans-serif; background: #0b1220; color: #e8eefc; }
+    .wrap { max-width: 520px; margin: 12vh auto; padding: 2rem; border: 1px solid #24314d; border-radius: 14px; background: #121a2b; }
+    h1 { margin: 0 0 .5rem; font-size: 1.4rem; }
+    p { color: #93a0b8; line-height: 1.6; }
+    a.btn { display: inline-block; margin-top: 1rem; padding: .6rem 1rem; background: #2563eb; color: #fff; border-radius: 10px; text-decoration: none; }
+    code { color: #93c5fd; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>DockerOps</h1>
+    <p>飞牛专用安装包已就绪。若桌面入口未自动跳转，请打开：</p>
+    <p><a class="btn" id="go" href="http://127.0.0.1:8080/" target="_blank" rel="noopener">打开 DockerOps 控制台</a></p>
+    <p>首次使用请在 Web 界面设置管理员账号，或通过环境变量 <code>DOCKEROPS_ADMIN_PASSWORD</code> 预置。</p>
+  </div>
+  <script>
+    // Prefer same host with configured port if injected by gateway later
+    const port = (location.port && location.port !== "80") ? location.port : "8080";
+    const url = `${location.protocol}//${location.hostname}:${port}/`;
+    document.getElementById("go").href = url;
+  </script>
+</body>
+</html>

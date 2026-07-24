@@ -1,0 +1,69 @@
+[
+  {
+    "stepTitle": "安装 DockerOps",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "<b>DockerOps</b> 是面向飞牛 / NAS 的 Docker 运维平台：安全更新、Doctor 诊断、日常资源管理，并与飞牛 Docker UI 引擎级双方接管 Compose 项目。<br><br>安装后将拉取镜像 <code>ghcr.io/deltrivx/dockerops</code> 并创建容器。请确保设备可访问 ghcr.io（可配置代理）。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_app_port",
+        "label": "Web 访问端口",
+        "initValue": "8080",
+        "rules": [
+          { "required": true, "message": "请输入端口号" },
+          {
+            "pattern": "^([1-9]\\d{3}|[1-5]\\d{4}|6[0-4]\\d{3}|65000)$",
+            "message": "请选择 1000–65000 之间的数字"
+          }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_takeover",
+        "label": "完整接管模式",
+        "initValue": "false",
+        "options": [
+          { "label": "关闭（推荐）— 登录后可启停/日志；删除与 prune 需再开", "value": "false" },
+          { "label": "开启 — compose up/down、删除容器/镜像、系统清理（高权限）", "value": "true" }
+        ],
+        "rules": [{ "required": true, "message": "请选择接管模式" }]
+      },
+      {
+        "type": "text",
+        "field": "wizard_admin_user",
+        "label": "预置管理员用户名（可选）",
+        "initValue": "admin",
+        "rules": [
+          { "required": false, "message": "" },
+          { "min": 0, "max": 32, "message": "最长 32 字符" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_admin_password",
+        "label": "预置管理员密码（可选，≥6 位；留空则首次打开网页设置）",
+        "initValue": "",
+        "rules": [
+          { "required": false, "message": "" },
+          { "min": 0, "max": 128, "message": "密码过长" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_host_compose",
+        "label": "宿主机 Compose 工程目录（挂载到容器 /compose，可按实机修改）",
+        "initValue": "/vol1/docker/compose",
+        "rules": [
+          { "required": false, "message": "" },
+          { "min": 0, "max": 256, "message": "路径过长" }
+        ]
+      },
+      {
+        "type": "tips",
+        "helpText": "安装完成后在应用中心启动 DockerOps，浏览器访问 <code>http://&lt;飞牛IP&gt;:端口</code>。详细说明见 GitHub Release 与项目 README。"
+      }
+    ]
+  }
+]

@@ -1,0 +1,22 @@
+[
+  {
+    "stepTitle": "卸载 DockerOps",
+    "items": [
+      {
+        "type": "radio",
+        "field": "wizard_data_action",
+        "label": "是否保留 DockerOps 数据（SQLite、备份、运维记录）",
+        "initValue": "keep",
+        "options": [
+          { "label": "保留数据（推荐）", "value": "keep" },
+          { "label": "删除全部数据 — 不可恢复", "value": "delete" }
+        ],
+        "rules": [{ "required": true, "message": "请选择" }]
+      },
+      {
+        "type": "tips",
+        "helpText": "卸载将停止并移除 DockerOps 容器。镜像默认保留以便快速重装；数据目录位于应用文件「dockerops」。"
+      }
+    ]
+  }
+]

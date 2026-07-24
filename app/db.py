@@ -36,6 +36,14 @@ def init_db() -> None:
                     created_at REAL NOT NULL,
                     expires_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS users (
+                    id TEXT PRIMARY KEY,
+                    username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL,
+                    role TEXT NOT NULL DEFAULT 'admin',
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS ops_records (
                     id TEXT PRIMARY KEY,
                     action TEXT NOT NULL,
@@ -57,6 +65,11 @@ def init_db() -> None:
                     actor TEXT,
                     detail TEXT,
                     created_at REAL NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS app_meta (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL,
+                    updated_at REAL NOT NULL
                 );
                 """
             )
@@ -155,6 +168,101 @@ def latest_monitor_snapshot() -> dict[str, Any] | None:
         "created_at": row["created_at"],
         "payload": _try_json(row["payload"]),
     }
+
+
+def user_count() -> int:
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute("SELECT COUNT(*) AS c FROM users").fetchone()
+            return int(row["c"] if row else 0)
+        finally:
+            conn.close()
+
+
+def get_user_by_username(username: str) -> dict[str, Any] | None:
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM users WHERE username = ?", (username,)
+            ).fetchone()
+        finally:
+            conn.close()
+    if not row:
+        return None
+    return {
+        "id": row["id"],
+        "username": row["username"],
+        "password_hash": row["password_hash"],
+        "role": row["role"],
+        "created_at": row["created_at"],
+        "updated_at": row["updated_at"],
+    }
+
+
+def create_user(username: str, password_hash: str, role: str = "admin") -> dict[str, Any]:
+    uid = uuid.uuid4().hex
+    now = time.time()
+    with _lock:
+        conn = connect()
+        try:
+            conn.execute(
+                "INSERT INTO users (id, username, password_hash, role, created_at, updated_at) VALUES (?,?,?,?,?,?)",
+                (uid, username, password_hash, role, now, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    return {
+        "id": uid,
+        "username": username,
+        "role": role,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+
+def update_user_password(username: str, password_hash: str) -> bool:
+    now = time.time()
+    with _lock:
+        conn = connect()
+        try:
+            cur = conn.execute(
+                "UPDATE users SET password_hash = ?, updated_at = ? WHERE username = ?",
+                (password_hash, now, username),
+            )
+            conn.commit()
+            return cur.rowcount > 0
+        finally:
+            conn.close()
+
+
+def get_meta(key: str) -> str | None:
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute("SELECT value FROM app_meta WHERE key = ?", (key,)).fetchone()
+            return row["value"] if row else None
+        finally:
+            conn.close()
+
+
+def set_meta(key: str, value: str) -> None:
+    now = time.time()
+    with _lock:
+        conn = connect()
+        try:
+            conn.execute(
+                """
+                INSERT INTO app_meta (key, value, updated_at) VALUES (?,?,?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (key, value, now),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
 
 def create_session(username: str, ttl_hours: int) -> str:

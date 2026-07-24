@@ -1,0 +1,9 @@
+#!/bin/bash
+### Called before uninstall — stop container first.
+set -u
+CONTAINER_NAME="dockerops"
+if command -v docker >/dev/null 2>&1; then
+  docker stop -t 15 "${CONTAINER_NAME}" 2>/dev/null || true
+  docker rm -f "${CONTAINER_NAME}" 2>/dev/null || true
+fi
+exit 0

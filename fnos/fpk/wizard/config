@@ -1,0 +1,66 @@
+[
+  {
+    "stepTitle": "DockerOps 应用设置",
+    "items": [
+      {
+        "type": "tips",
+        "helpText": "修改 Web 端口、接管开关等。管理员密码优先在首次打开 Web 界面设置；也可通过下方环境变量预置。"
+      },
+      {
+        "type": "text",
+        "field": "wizard_app_port",
+        "label": "Web 端口",
+        "initValue": "8080",
+        "rules": [
+          { "required": true, "message": "请输入端口" },
+          {
+            "pattern": "^([1-9]\\d{3}|[1-5]\\d{4}|6[0-4]\\d{3}|65000)$",
+            "message": "请输入 1000–65000 之间的端口"
+          }
+        ]
+      },
+      {
+        "type": "radio",
+        "field": "wizard_takeover",
+        "label": "完整接管（compose up/down、删除/prune）",
+        "initValue": "false",
+        "options": [
+          { "label": "关闭（推荐，仅日常启停/日志）", "value": "false" },
+          { "label": "开启（需 rw docker.sock，权限等同主机 root）", "value": "true" }
+        ],
+        "rules": [{ "required": true, "message": "请选择" }]
+      },
+      {
+        "type": "text",
+        "field": "wizard_admin_user",
+        "label": "预置管理员用户名（可选，配合密码跳过 Web 向导）",
+        "initValue": "admin",
+        "rules": [
+          { "required": false, "message": "" },
+          { "min": 0, "max": 32, "message": "用户名过长" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_admin_password",
+        "label": "预置管理员密码（可选，至少 6 位；留空则首次打开 Web 设置）",
+        "initValue": "",
+        "rules": [
+          { "required": false, "message": "" },
+          { "min": 0, "max": 128, "message": "密码过长" }
+        ]
+      },
+      {
+        "type": "text",
+        "field": "wizard_compose_dirs",
+        "label": "Compose 工程目录（容器内路径，默认 /compose）",
+        "initValue": "/compose",
+        "rules": [{ "required": false, "message": "" }]
+      },
+      {
+        "type": "tips",
+        "helpText": "数据目录位于应用数据 share「dockerops」。镜像：ghcr.io/deltrivx/dockerops:latest（GitHub Actions 远程构建）。"
+      }
+    ]
+  }
+]

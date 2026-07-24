@@ -1,0 +1,10 @@
+#!/bin/bash
+### Called after user changes application settings — recreate container with new env.
+
+set -u
+TARGET="${TRIM_APPDEST:-/var/apps/dockerops/target}"
+if [ -x "${TARGET}/cmd/main" ]; then
+  "${TARGET}/cmd/main" stop || true
+  "${TARGET}/cmd/main" start || true
+fi
+exit 0

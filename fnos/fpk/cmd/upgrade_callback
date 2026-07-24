@@ -1,0 +1,9 @@
+#!/bin/bash
+### Called after upgrade — pull image & restart.
+set -u
+TARGET="${TRIM_APPDEST:-/var/apps/dockerops/target}"
+chmod +x "${TARGET}/cmd/"* 2>/dev/null || true
+if [ -x "${TARGET}/cmd/main" ]; then
+  "${TARGET}/cmd/main" start || true
+fi
+exit 0

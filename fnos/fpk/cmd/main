@@ -1,0 +1,181 @@
+#!/bin/bash
+# DockerOps FnOS service controller — start/stop/status via Docker engine.
+# Relies on TRIM_* variables provided by AppCenter.
+
+set -u
+
+APP_NAME="${TRIM_APPNAME:-dockerops}"
+IMAGE="${DOCKEROPS_IMAGE:-ghcr.io/deltrivx/dockerops:latest}"
+CONTAINER_NAME="dockerops"
+
+# Prefer AppCenter data share; fallback under package var
+DATA_ROOT="${TRIM_DATA_SHARE_PATHS%%:*}"
+if [ -z "${DATA_ROOT}" ] || [ ! -d "${DATA_ROOT}" ]; then
+  DATA_ROOT="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}/data"
+fi
+mkdir -p "${DATA_ROOT}" 2>/dev/null || true
+
+LOG_DIR="${TRIM_APPDEST_VOL:-/vol1}/@appshare/${APP_NAME}"
+mkdir -p "${LOG_DIR}" 2>/dev/null || true
+LOG_FILE="${LOG_DIR}/dockerops.log"
+PID_FILE="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}/app.pid"
+ENV_FILE="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}/dockerops.env"
+CFG_DIR="${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}/config"
+UI_CFG="${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}/ui/config"
+
+# Wizard fields (may be exported by AppCenter as env)
+PORT="${wizard_app_port:-${DOCKEROPS_PORT:-8080}}"
+TAKEOVER="${wizard_takeover:-${DOCKEROPS_TAKEOVER_ENABLED:-false}}"
+ADMIN_USER="${wizard_admin_user:-${DOCKEROPS_ADMIN_USER:-admin}}"
+ADMIN_PASS="${wizard_admin_password:-${DOCKEROPS_ADMIN_PASSWORD:-}}"
+COMPOSE_IN="${wizard_compose_dirs:-/compose}"
+HOST_COMPOSE="${wizard_host_compose:-/vol1/docker/compose}"
+
+log() {
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*" | tee -a "${LOG_FILE}" >/dev/null
+  echo "$(date '+%Y-%m-%d %H:%M:%S') - $*"
+}
+
+have_docker() {
+  command -v docker >/dev/null 2>&1
+}
+
+container_running() {
+  have_docker || return 1
+  docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"
+}
+
+container_exists() {
+  have_docker || return 1
+  docker ps -a --format '{{.Names}}' 2>/dev/null | grep -qx "${CONTAINER_NAME}"
+}
+
+write_env_file() {
+  mkdir -p "$(dirname "${ENV_FILE}")"
+  cat > "${ENV_FILE}" <<EOF
+DOCKEROPS_HOST=0.0.0.0
+DOCKEROPS_PORT=8080
+DOCKEROPS_DATA_DIR=/data
+DOCKEROPS_PLATFORM=fnos
+DOCKEROPS_RESOURCE_APIS=true
+DOCKEROPS_CONSOLE_ENABLED=false
+DOCKEROPS_TAKEOVER_ENABLED=${TAKEOVER}
+DOCKEROPS_COMPOSE_ENABLED=true
+DOCKEROPS_COMPOSE_PROJECT_DIRS=${COMPOSE_IN}
+DOCKEROPS_UNRAID_ENABLED=false
+DOCKEROPS_ADMIN_USER=${ADMIN_USER}
+TZ=Asia/Shanghai
+EOF
+  # Only inject password into container env when user set one (enables auto-bootstrap)
+  if [ -n "${ADMIN_PASS}" ] && [ "${#ADMIN_PASS}" -ge 6 ]; then
+    echo "DOCKEROPS_ADMIN_PASSWORD=${ADMIN_PASS}" >> "${ENV_FILE}"
+  fi
+  chmod 600 "${ENV_FILE}" 2>/dev/null || true
+}
+
+patch_ui_port() {
+  # Rewrite desktop iframe URL port if ui/config present
+  if [ -f "${UI_CFG}" ]; then
+    sed -i "s|127.0.0.1:[0-9][0-9]*|127.0.0.1:${PORT}|g" "${UI_CFG}" 2>/dev/null || true
+    sed -i "s|\${wizard_app_port}|${PORT}|g" "${UI_CFG}" 2>/dev/null || true
+  fi
+}
+
+start_process() {
+  log "启动 DockerOps (image=${IMAGE}, port=${PORT}, takeover=${TAKEOVER})"
+  if ! have_docker; then
+    log "错误: 未找到 docker 命令，请确认飞牛 Docker 服务已安装并运行"
+    exit 1
+  fi
+  if container_running; then
+    log "容器已在运行"
+    echo "1" > "${PID_FILE}"
+    return 0
+  fi
+
+  write_env_file
+  patch_ui_port
+
+  # Pull latest (best-effort)
+  docker pull "${IMAGE}" >> "${LOG_FILE}" 2>&1 || log "警告: 拉取镜像失败，尝试使用本地镜像"
+
+  if container_exists; then
+    docker rm -f "${CONTAINER_NAME}" >> "${LOG_FILE}" 2>&1 || true
+  fi
+
+  SOCK_MODE="ro"
+  if [ "${TAKEOVER}" = "true" ] || [ "${TAKEOVER}" = "1" ]; then
+    SOCK_MODE="rw"
+  fi
+
+  RUN_ARGS=(
+    -d
+    --name "${CONTAINER_NAME}"
+    --restart unless-stopped
+    -p "${PORT}:8080"
+    --env-file "${ENV_FILE}"
+    -v "${DATA_ROOT}:/data"
+    -v "/var/run/docker.sock:/var/run/docker.sock:${SOCK_MODE}"
+  )
+
+  # Mount compose projects if host path exists
+  if [ -d "${HOST_COMPOSE}" ]; then
+    RUN_ARGS+=(-v "${HOST_COMPOSE}:${COMPOSE_IN}")
+  else
+    log "提示: 宿主机 Compose 目录 ${HOST_COMPOSE} 不存在，跳过挂载（可在应用设置中修改）"
+  fi
+
+  if ! docker run "${RUN_ARGS[@]}" "${IMAGE}" >> "${LOG_FILE}" 2>&1; then
+    log "错误: docker run 失败，详见 ${LOG_FILE}"
+    exit 1
+  fi
+
+  # Store container id as pseudo pid marker
+  cid=$(docker inspect -f '{{.Id}}' "${CONTAINER_NAME}" 2>/dev/null | head -c 12)
+  echo "${cid:-1}" > "${PID_FILE}"
+  log "DockerOps 已启动 cid=${cid} web=http://0.0.0.0:${PORT}/"
+  return 0
+}
+
+stop_process() {
+  log "停止 DockerOps"
+  if have_docker && container_exists; then
+    docker stop -t 20 "${CONTAINER_NAME}" >> "${LOG_FILE}" 2>&1 || true
+    docker rm -f "${CONTAINER_NAME}" >> "${LOG_FILE}" 2>&1 || true
+  fi
+  rm -f "${PID_FILE}"
+  return 0
+}
+
+status() {
+  if container_running; then
+    return 0
+  fi
+  return 1
+}
+
+case "${1:-}" in
+  start)
+    start_process
+    ;;
+  stop)
+    stop_process
+    ;;
+  status)
+    if status; then
+      exit 0
+    else
+      # AppCenter often expects status to heal
+      start_process
+      exit $?
+    fi
+    ;;
+  restart)
+    stop_process
+    start_process
+    ;;
+  *)
+    echo "Usage: $0 {start|stop|status|restart}"
+    exit 1
+    ;;
+esac

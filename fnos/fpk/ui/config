@@ -1,0 +1,18 @@
+{
+    ".url": {
+        "dockerops.Application": {
+            "title": "DockerOps",
+            "desc": "Docker 安全运维 · 诊断 · Compose 双方接管",
+            "icon": "images/icon_{0}.png",
+            "type": "iframe",
+            "protocol": "http",
+            "url": "http://127.0.0.1:${wizard_app_port}/",
+            "allUsers": false,
+            "control": {
+                "fullUrlPerm": "editable",
+                "pathPerm": "hidden",
+                "accessPerm": "readonly"
+            }
+        }
+    }
+}

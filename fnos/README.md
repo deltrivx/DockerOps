@@ -4,7 +4,26 @@ DockerOps 在飞牛上采用 **Docker / Compose 引擎级双向接管**：
 
 - 与飞牛官方 Docker UI / CLI 操作**同一 engine**
 - Compose 项目与宿主机**同一目录、同一 project 名**
-- **不**深绑 AppCenter FPK / 应用商店写接口
+- 提供 **专业 FPK 安装包**（应用中心手动安装），由容器拉取 GHCR 镜像运行
+
+## 方式 A：FPK 专业安装包（推荐）
+
+1. 从 [GitHub Releases](https://github.com/deltrivx/DockerOps/releases) 下载 `dockerops-*-fnos.fpk`
+2. 飞牛 **应用中心 → 手动安装** 选择该 FPK
+3. 安装向导中配置：
+   - Web 端口（默认 8080）
+   - 是否开启完整接管
+   - **可选**预置管理员用户名/密码（留空则首次打开网页设置）
+   - 宿主机 Compose 工程目录
+4. 启动应用，浏览器访问 `http://<飞牛IP>:<端口>`
+
+FPK 源码与打包脚本：
+
+- 包内容：[`fnos/fpk/`](fpk/)（manifest / 图标 / wizard / 启停脚本）
+- 打包：`./scripts/build_fnos_fpk.sh` → `dist/dockerops-<ver>-fnos.fpk`
+- CI 在 tag `v*` 时自动附带到 Release
+
+## 方式 B：Compose / docker run
 
 ## 快速部署
 
