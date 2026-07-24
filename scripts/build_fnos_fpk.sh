@@ -10,9 +10,9 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 FPK_SRC="${ROOT}/fnos/fpk"
 DIST="${ROOT}/dist"
 # Sanitize version for filename (strip +sha.xxx etc.)
-RAW_VERSION="${DOCKEROPS_VERSION:-0.3.2}"
+RAW_VERSION="${DOCKEROPS_VERSION:-0.3.3}"
 VERSION="$(printf '%s' "${RAW_VERSION}" | sed -E 's/\+.*//; s/[^A-Za-z0-9._-]+/-/g')"
-[[ -n "${VERSION}" ]] || VERSION="0.3.2"
+[[ -n "${VERSION}" ]] || VERSION="0.3.3"
 OUT_NAME="dockerops-${VERSION}-fnos.fpk"
 STAGE="$(mktemp -d)"
 APP_STAGE="$(mktemp -d)"
@@ -42,12 +42,19 @@ chmod +x "${APP_STAGE}/cmd/"*
 # copy icons into app ui
 cp -f "${FPK_SRC}/ui/images/icon_64.png" "${APP_STAGE}/ui/images/"
 cp -f "${FPK_SRC}/ui/images/icon_256.png" "${APP_STAGE}/ui/images/"
+# desktop launcher must be executable (FnOS ThirdParty CGI)
+if [ -f "${APP_STAGE}/ui/index.cgi" ]; then
+  chmod +x "${APP_STAGE}/ui/index.cgi"
+fi
+# default port for launcher (rewritten by cmd/main on start)
+echo "8080" > "${APP_STAGE}/ui/port"
 
 # include short README in app
 cat > "${APP_STAGE}/README.txt" <<EOF
 DockerOps ${VERSION} — FnOS package
 Image: ghcr.io/deltrivx/dockerops:latest
 Docs: https://github.com/deltrivx/DockerOps
+Desktop entry: /cgi/ThirdParty/dockerops/index.cgi (avoids 127.0.0.1 black screen)
 First-run: open Web UI to set admin, or set DOCKEROPS_ADMIN_PASSWORD via install wizard.
 EOF
 

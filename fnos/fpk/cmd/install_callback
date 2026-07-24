@@ -1,5 +1,5 @@
 #!/bin/bash
-### Called after install — normalize icons into package root.
+### Called after install — normalize icons + ensure desktop launcher executable.
 
 set -u
 APP_ROOT="${TRIM_APPDEST:-/var/apps/dockerops/target}"
@@ -18,6 +18,13 @@ if [ -f "${SRC64}" ]; then
   cp -f "${SRC64}" "${APP_ROOT}/ui/images/icon_64.png" 2>/dev/null || true
 fi
 
-# Ensure scripts executable
+# Desktop launcher + scripts
 chmod +x "${APP_ROOT}/cmd/"* 2>/dev/null || true
+chmod +x "${APP_ROOT}/ui/index.cgi" 2>/dev/null || true
+
+# Default port file (overwritten on start with wizard port)
+if [ ! -f "${APP_ROOT}/ui/port" ]; then
+  echo "8080" > "${APP_ROOT}/ui/port" 2>/dev/null || true
+fi
+
 exit 0

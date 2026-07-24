@@ -66,7 +66,7 @@ from unraid_mgr import (
 from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.3.2"
+VERSION = "0.3.3"
 settings = get_settings()
 init_db()
 

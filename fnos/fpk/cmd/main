@@ -21,7 +21,9 @@ LOG_FILE="${LOG_DIR}/dockerops.log"
 PID_FILE="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}/app.pid"
 ENV_FILE="${TRIM_PKGVAR:-/var/apps/${APP_NAME}/var}/dockerops.env"
 CFG_DIR="${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}/config"
-UI_CFG="${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}/ui/config"
+UI_DIR="${TRIM_APPDEST:-/var/apps/${APP_NAME}/target}/ui"
+UI_CFG="${UI_DIR}/config"
+UI_PORT_FILE="${UI_DIR}/port"
 
 # Wizard fields (may be exported by AppCenter as env)
 PORT="${wizard_app_port:-${DOCKEROPS_PORT:-8080}}"
@@ -73,12 +75,24 @@ EOF
   chmod 600 "${ENV_FILE}" 2>/dev/null || true
 }
 
-patch_ui_port() {
-  # Rewrite desktop iframe URL port if ui/config present
+patch_ui() {
+  mkdir -p "${UI_DIR}" 2>/dev/null || true
+  # Persist host-mapped port for index.cgi launcher (never use 127.0.0.1 in desktop URL)
+  printf '%s\n' "${PORT}" > "${UI_PORT_FILE}" 2>/dev/null || true
+  chmod 644 "${UI_PORT_FILE}" 2>/dev/null || true
+
   if [ -f "${UI_CFG}" ]; then
-    sed -i "s|127.0.0.1:[0-9][0-9]*|127.0.0.1:${PORT}|g" "${UI_CFG}" 2>/dev/null || true
-    sed -i "s|\${wizard_app_port}|${PORT}|g" "${UI_CFG}" 2>/dev/null || true
+    # Force desktop entry through CGI launcher (same-origin with FnOS web UI)
+    if grep -q 'ThirdParty/dockerops/index.cgi' "${UI_CFG}" 2>/dev/null; then
+      :
+    else
+      # rewrite any leftover absolute 127.0.0.1 URL to CGI path
+      sed -i 's|"url"[[:space:]]*:[[:space:]]*"http://127.0.0.1:[^"]*"|"url": "/cgi/ThirdParty/dockerops/index.cgi"|g' "${UI_CFG}" 2>/dev/null || true
+      sed -i 's|\${wizard_app_port}|'"${PORT}"'|g' "${UI_CFG}" 2>/dev/null || true
+    fi
   fi
+  # ensure launcher is executable
+  chmod +x "${UI_DIR}/index.cgi" 2>/dev/null || true
 }
 
 start_process() {
@@ -89,12 +103,13 @@ start_process() {
   fi
   if container_running; then
     log "容器已在运行"
+    patch_ui
     echo "1" > "${PID_FILE}"
     return 0
   fi
 
   write_env_file
-  patch_ui_port
+  patch_ui
 
   # Pull latest (best-effort)
   docker pull "${IMAGE}" >> "${LOG_FILE}" 2>&1 || log "警告: 拉取镜像失败，尝试使用本地镜像"
@@ -133,7 +148,7 @@ start_process() {
   # Store container id as pseudo pid marker
   cid=$(docker inspect -f '{{.Id}}' "${CONTAINER_NAME}" 2>/dev/null | head -c 12)
   echo "${cid:-1}" > "${PID_FILE}"
-  log "DockerOps 已启动 cid=${cid} web=http://0.0.0.0:${PORT}/"
+  log "DockerOps 已启动 cid=${cid} web=http://0.0.0.0:${PORT}/ desktop=/cgi/ThirdParty/dockerops/index.cgi"
   return 0
 }
 

@@ -15,11 +15,15 @@ DockerOps 在飞牛上采用 **Docker / Compose 引擎级双向接管**：
    - 是否开启完整接管
    - **可选**预置管理员用户名/密码（留空则首次打开网页设置）
    - 宿主机 Compose 工程目录
-4. 启动应用，浏览器访问 `http://<飞牛IP>:<端口>`
+4. 启动应用后：
+   - **桌面图标**：通过 CGI 智能跳转打开（使用当前飞牛主机名 + 端口，**不再使用 127.0.0.1**，避免远程打开黑屏）
+   - 也可直接浏览器访问 `http://<飞牛IP>:<端口>`
+
+> **v0.3.3 黑屏修复**：旧版 FPK 桌面入口写死 `http://127.0.0.1:端口`，在其它设备上会指向本机导致黑屏。请升级到 `dockerops-0.3.3-fnos.fpk` 或更高版本。
 
 FPK 源码与打包脚本：
 
-- 包内容：[`fnos/fpk/`](fpk/)（manifest / 图标 / wizard / 启停脚本）
+- 包内容：[`fnos/fpk/`](fpk/)（manifest / 图标 / wizard / `ui/index.cgi` 桌面入口 / 启停脚本）
 - 打包：`./scripts/build_fnos_fpk.sh` → `dist/dockerops-<ver>-fnos.fpk`
 - CI 在 tag `v*` 时自动附带到 Release
 

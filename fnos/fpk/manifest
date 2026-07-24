@@ -1,6 +1,6 @@
 appname               = dockerops
 display_name          = DockerOps 容器运维平台
-desc                  = `面向 NAS / 飞牛 的专业 Docker 运维平台，可替代 Portainer-CE 日常场景。<br><br><b>核心能力</b><br>• 安全更新：备份 → 拉取 → 按管理源重建，操作可追溯<br>• Doctor 诊断：健康分 + 可读故障说明，不只「挂了」<br>• 日常运维：容器启停/重启/日志、镜像/网络/卷、系统清理与事件<br>• Compose 引擎级双方接管：与飞牛 Docker UI / CLI 共享同一工程<br>• Unraid 模板升级：按 dockerMan 模板重建，保持 dockerman 非三方<br>• 首次使用设置向导：也可通过环境变量预置管理员账号<br><br><b>飞牛安装说明</b><br>• 本 FPK 通过 Docker 拉取 <code>ghcr.io/deltrivx/dockerops</code>（仅 GitHub Actions 远程构建）<br>• 默认映射 Web 端口 8080，数据卷持久化于应用数据目录<br>• 挂载 docker.sock 实现引擎级管理；完整接管请在应用设置中开启<br>• 首次打开 Web 界面设置管理员用户名/密码；或安装前配置环境变量跳过向导<br><br><b>安全提示</b><br>• 请修改默认/向导密码，建议仅内网访问<br>• rw 挂载 docker.sock ≈ 主机 root 权限，请谨慎开启完整接管<br><br>项目主页：<a target='_blank' href='https://github.com/deltrivx/DockerOps' style='color:#60a5fa'>GitHub deltrivx/DockerOps</a> · 镜像文档见 Release 附件`
+desc                  = `面向 NAS / 飞牛 的专业 Docker 运维平台，可替代 Portainer-CE 日常场景。<br><br><b>核心能力</b><br>• 安全更新：备份 → 拉取 → 按管理源重建，操作可追溯<br>• Doctor 诊断：健康分 + 可读故障说明，不只「挂了」<br>• 日常运维：容器启停/重启/日志、镜像/网络/卷、系统清理与事件<br>• Compose 引擎级双方接管：与飞牛 Docker UI / CLI 共享同一工程<br>• Unraid 模板升级：按 dockerMan 模板重建，保持 dockerman 非三方<br>• 首次使用设置向导：也可通过环境变量预置管理员账号<br><br><b>飞牛安装说明</b><br>• 本 FPK 通过 Docker 拉取 <code>ghcr.io/deltrivx/dockerops</code>（仅 GitHub Actions 远程构建）<br>• 桌面入口使用智能跳转（当前主机名 + 端口），避免 127.0.0.1 黑屏<br>• 默认映射 Web 端口 8080，数据卷持久化于应用数据目录<br>• 挂载 docker.sock 实现引擎级管理；完整接管请在应用设置中开启<br>• 首次打开 Web 界面设置管理员用户名/密码；或安装前配置环境变量跳过向导<br><br><b>安全提示</b><br>• 请修改默认/向导密码，建议仅内网访问<br>• rw 挂载 docker.sock ≈ 主机 root 权限，请谨慎开启完整接管<br><br>项目主页：<a target='_blank' href='https://github.com/deltrivx/DockerOps' style='color:#60a5fa'>GitHub deltrivx/DockerOps</a> · 镜像文档见 Release 附件`
 source                = thirdparty
 maintainer            = deltrivx
 maintainer_url        = https://github.com/deltrivx/DockerOps
@@ -9,6 +9,6 @@ distributor_url       = https://github.com/deltrivx/DockerOps/releases
 desktop_uidir         = ui
 desktop_applaunchname = dockerops.Application
 platform              = all
-version               = 0.3.2
-	changelog             = • Unraid 风格侧栏 UI + 博客 Canvas 粒子背景<br>• 一键检测 / 一键更新（Registry digest 比对）<br>• 容器/镜像/网络/卷搜索过滤<br>• 首次使用管理员设置向导；环境变量预置<br>• 日常运维全覆盖 + 飞牛 FPK + GHCR 远程构建
+version               = 0.3.3
+changelog             = • 修复飞牛桌面打开黑屏：入口改为 CGI 智能跳转（使用主机名而非 127.0.0.1）<br>• 补全新版品牌图标（Unraid / FPK）<br>• Unraid 模板默认容器名 DockerOps<br>• Unraid 风格侧栏 UI + 一键检测/更新 + 搜索过滤<br>• 首次管理员向导；日常运维全覆盖；GHCR 远程构建
 checksum              = PLACEHOLDER

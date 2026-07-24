@@ -6,12 +6,12 @@
             "icon": "images/icon_{0}.png",
             "type": "iframe",
             "protocol": "http",
-            "url": "http://127.0.0.1:${wizard_app_port}/",
+            "url": "/cgi/ThirdParty/dockerops/index.cgi",
             "allUsers": false,
             "control": {
+                "accessPerm": "editable",
                 "fullUrlPerm": "editable",
-                "pathPerm": "hidden",
-                "accessPerm": "readonly"
+                "pathPerm": "hidden"
             }
         }
     }
