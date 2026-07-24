@@ -1,0 +1,54 @@
+# 飞牛 (FnOS) 引擎级部署示例
+# 与飞牛 Docker UI / CLI 共享同一 docker engine 与 compose 工程目录。
+# 镜像仅从 GHCR 拉取（GitHub Actions 远程构建）。
+#
+# 使用前请按实机修改：
+#   - compose 工程宿主机路径
+#   - 数据目录
+#   - 管理员密码
+
+services:
+  dockerops:
+    image: ghcr.io/deltrivx/dockerops:latest
+    pull_policy: always
+    container_name: dockerops
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      TZ: Asia/Shanghai
+      DOCKEROPS_HOST: 0.0.0.0
+      DOCKEROPS_PORT: 8080
+      DOCKEROPS_DATA_DIR: /data
+      DOCKEROPS_ADMIN_USER: admin
+      DOCKEROPS_ADMIN_PASSWORD: change-me
+      DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
+      DOCKEROPS_PLATFORM: fnos
+      DOCKEROPS_RESOURCE_APIS: "true"
+      # 日常启停不依赖接管；up/down/prune/删除 需 true + rw sock
+      DOCKEROPS_TAKEOVER_ENABLED: "true"
+      DOCKEROPS_COMPOSE_ENABLED: "true"
+      DOCKEROPS_COMPOSE_PROJECT_DIRS: /compose
+      DOCKEROPS_UNRAID_ENABLED: "false"
+    volumes:
+      - dockerops-data:/data
+      # 完整接管：rw；只读运维可改为 :ro 并设 TAKEOVER=false
+      - /var/run/docker.sock:/var/run/docker.sock
+      # 将飞牛上的 compose 工程根目录挂到 /compose（路径按实机调整）
+      # 常见候选：/vol1/docker/compose 、用户 docker 目录下的 compose 文件夹
+      - /vol1/docker/compose:/compose
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=5)",
+        ]
+      interval: 30s
+      timeout: 8s
+      retries: 3
+      start_period: 25s
+
+volumes:
+  dockerops-data:

@@ -259,3 +259,397 @@ def pull_image(image: str) -> dict[str, Any]:
         if status:
             lines.append(status)
     return {"image": image, "log_tail": lines[-20:]}
+
+
+# ── Lifecycle ──────────────────────────────────────────────
+
+
+def _get_cont(container_id: str):
+    c = get_client()
+    try:
+        return c.containers.get(container_id)
+    except NotFound as e:
+        raise KeyError(container_id) from e
+
+
+def start_container(container_id: str) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    if cont.status != "running":
+        cont.start()
+    cont.reload()
+    return _summarize(cont, _template_names())
+
+
+def restart_container(container_id: str, timeout: int = 20) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    cont.restart(timeout=timeout)
+    cont.reload()
+    return _summarize(cont, _template_names())
+
+
+def pause_container(container_id: str) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    cont.pause()
+    cont.reload()
+    return _summarize(cont, _template_names())
+
+
+def unpause_container(container_id: str) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    cont.unpause()
+    cont.reload()
+    return _summarize(cont, _template_names())
+
+
+def kill_container(container_id: str, signal: str = "SIGKILL") -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    cont.kill(signal=signal)
+    cont.reload()
+    return _summarize(cont, _template_names())
+
+
+def container_action_stop(container_id: str, timeout: int = 20) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    if cont.status == "running":
+        cont.stop(timeout=timeout)
+    cont.reload()
+    return _summarize(cont, _template_names())
+
+
+def container_action_remove(container_id: str, force: bool = False, volumes: bool = False) -> dict[str, Any]:
+    cont = _get_cont(container_id)
+    name = cont.name
+    cid = cont.short_id
+    cont.remove(force=force, v=volumes)
+    return {"id": cid, "name": name, "removed": True}
+
+
+# ── Logs / Events ──────────────────────────────────────────
+
+
+def container_logs(
+    container_id: str,
+    *,
+    tail: int = 200,
+    timestamps: bool = True,
+    since: int | None = None,
+    until: int | None = None,
+) -> str:
+    cont = _get_cont(container_id)
+    kwargs: dict[str, Any] = {
+        "stdout": True,
+        "stderr": True,
+        "timestamps": timestamps,
+        "tail": max(1, min(int(tail), 10000)),
+    }
+    if since is not None:
+        kwargs["since"] = since
+    if until is not None:
+        kwargs["until"] = until
+    raw = cont.logs(**kwargs)
+    if isinstance(raw, bytes):
+        return raw.decode("utf-8", errors="replace")
+    return str(raw)
+
+
+def container_logs_stream(
+    container_id: str,
+    *,
+    tail: int = 100,
+    timestamps: bool = True,
+):
+    """Generator yielding log line strings (follow mode)."""
+    cont = _get_cont(container_id)
+    stream = cont.logs(
+        stdout=True,
+        stderr=True,
+        stream=True,
+        follow=True,
+        timestamps=timestamps,
+        tail=max(1, min(int(tail), 5000)),
+    )
+    for chunk in stream:
+        if isinstance(chunk, bytes):
+            yield chunk.decode("utf-8", errors="replace")
+        else:
+            yield str(chunk)
+
+
+def docker_events(since: int | None = None, until: int | None = None, filters: dict | None = None):
+    """Generator of decoded Docker event dicts."""
+    c = get_client()
+    kwargs: dict[str, Any] = {"decode": True}
+    if since is not None:
+        kwargs["since"] = since
+    if until is not None:
+        kwargs["until"] = until
+    if filters:
+        kwargs["filters"] = filters
+    for event in c.events(**kwargs):
+        yield event
+
+
+# ── Images ─────────────────────────────────────────────────
+
+
+def list_images() -> list[dict[str, Any]]:
+    c = get_client()
+    out: list[dict[str, Any]] = []
+    for img in c.images.list():
+        tags = img.tags or []
+        attrs = img.attrs or {}
+        out.append(
+            {
+                "id": img.short_id.replace("sha256:", "") if img.short_id else img.id[:12],
+                "full_id": img.id,
+                "tags": tags,
+                "label": tags[0] if tags else (img.short_id or img.id[:12]),
+                "size": attrs.get("Size") or 0,
+                "created": attrs.get("Created"),
+            }
+        )
+    out.sort(key=lambda x: (x.get("label") or ""))
+    return out
+
+
+def remove_image(image_id: str, force: bool = False, noprune: bool = False) -> dict[str, Any]:
+    c = get_client()
+    result = c.images.remove(image=image_id, force=force, noprune=noprune)
+    return {"image": image_id, "result": result}
+
+
+def prune_images(dangling: bool = True) -> dict[str, Any]:
+    c = get_client()
+    filters = {"dangling": True} if dangling else None
+    result = c.images.prune(filters=filters)
+    return {
+        "images_deleted": result.get("ImagesDeleted") or [],
+        "space_reclaimed": result.get("SpaceReclaimed") or 0,
+    }
+
+
+# ── Networks ───────────────────────────────────────────────
+
+
+def list_networks() -> list[dict[str, Any]]:
+    c = get_client()
+    out: list[dict[str, Any]] = []
+    for net in c.networks.list():
+        attrs = net.attrs or {}
+        ipam = attrs.get("IPAM") or {}
+        configs = (ipam.get("Config") or [{}])[0] if ipam.get("Config") else {}
+        containers = attrs.get("Containers") or {}
+        out.append(
+            {
+                "id": net.short_id,
+                "name": net.name,
+                "driver": attrs.get("Driver"),
+                "scope": attrs.get("Scope"),
+                "internal": attrs.get("Internal"),
+                "attachable": attrs.get("Attachable"),
+                "subnet": configs.get("Subnet"),
+                "gateway": configs.get("Gateway"),
+                "containers": len(containers),
+                "labels": attrs.get("Labels") or {},
+            }
+        )
+    out.sort(key=lambda x: x.get("name") or "")
+    return out
+
+
+def create_network(
+    name: str,
+    *,
+    driver: str = "bridge",
+    internal: bool = False,
+    attachable: bool = False,
+    labels: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    c = get_client()
+    net = c.networks.create(
+        name,
+        driver=driver,
+        internal=internal,
+        attachable=attachable,
+        labels=labels or {},
+    )
+    net.reload()
+    attrs = net.attrs or {}
+    return {
+        "id": net.short_id,
+        "name": net.name,
+        "driver": attrs.get("Driver"),
+        "created": True,
+    }
+
+
+def remove_network(network_id: str) -> dict[str, Any]:
+    c = get_client()
+    net = c.networks.get(network_id)
+    name = net.name
+    net.remove()
+    return {"id": network_id, "name": name, "removed": True}
+
+
+# ── Volumes ────────────────────────────────────────────────
+
+
+def list_volumes() -> list[dict[str, Any]]:
+    c = get_client()
+    data = c.volumes.list()
+    out: list[dict[str, Any]] = []
+    for vol in data:
+        attrs = vol.attrs or {}
+        out.append(
+            {
+                "name": vol.name,
+                "driver": attrs.get("Driver"),
+                "mountpoint": attrs.get("Mountpoint"),
+                "created": attrs.get("CreatedAt"),
+                "labels": attrs.get("Labels") or {},
+                "scope": attrs.get("Scope"),
+            }
+        )
+    out.sort(key=lambda x: x.get("name") or "")
+    return out
+
+
+def create_volume(
+    name: str,
+    *,
+    driver: str = "local",
+    labels: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    c = get_client()
+    vol = c.volumes.create(name=name, driver=driver, labels=labels or {})
+    attrs = vol.attrs or {}
+    return {
+        "name": vol.name,
+        "driver": attrs.get("Driver"),
+        "mountpoint": attrs.get("Mountpoint"),
+        "created": True,
+    }
+
+
+def remove_volume(name: str, force: bool = False) -> dict[str, Any]:
+    c = get_client()
+    vol = c.volumes.get(name)
+    vol.remove(force=force)
+    return {"name": name, "removed": True}
+
+
+def prune_volumes() -> dict[str, Any]:
+    c = get_client()
+    result = c.volumes.prune()
+    return {
+        "volumes_deleted": result.get("VolumesDeleted") or [],
+        "space_reclaimed": result.get("SpaceReclaimed") or 0,
+    }
+
+
+# ── System ─────────────────────────────────────────────────
+
+
+def system_info() -> dict[str, Any]:
+    c = get_client()
+    info = c.info()
+    version = c.version()
+    keys = [
+        "Name",
+        "ServerVersion",
+        "OperatingSystem",
+        "OSType",
+        "Architecture",
+        "NCPU",
+        "MemTotal",
+        "DockerRootDir",
+        "Driver",
+        "Containers",
+        "ContainersRunning",
+        "ContainersPaused",
+        "ContainersStopped",
+        "Images",
+        "NEventsListener",
+        "KernelVersion",
+        "SystemTime",
+    ]
+    slim = {k: info.get(k) for k in keys if k in info}
+    slim["ApiVersion"] = version.get("ApiVersion")
+    slim["GitCommit"] = version.get("GitCommit")
+    return slim
+
+
+def system_df() -> dict[str, Any]:
+    c = get_client()
+    # docker-py: client.df()
+    try:
+        data = c.df()
+    except Exception:
+        data = c.api.df()
+    return {
+        "layers_size": data.get("LayersSize"),
+        "images": [
+            {
+                "id": (i.get("Id") or "")[:12],
+                "tags": i.get("RepoTags") or [],
+                "size": i.get("Size"),
+                "shared_size": i.get("SharedSize"),
+                "containers": i.get("Containers"),
+            }
+            for i in (data.get("Images") or [])[:50]
+        ],
+        "containers": [
+            {
+                "id": (x.get("Id") or "")[:12],
+                "names": x.get("Names") or [],
+                "image": x.get("Image"),
+                "size_rw": x.get("SizeRw"),
+                "size_root_fs": x.get("SizeRootFs"),
+                "state": x.get("State"),
+            }
+            for x in (data.get("Containers") or [])[:50]
+        ],
+        "volumes": [
+            {
+                "name": v.get("Name"),
+                "size": (v.get("UsageData") or {}).get("Size"),
+                "ref_count": (v.get("UsageData") or {}).get("RefCount"),
+            }
+            for v in (data.get("Volumes") or [])[:50]
+        ],
+        "build_cache": data.get("BuildCache") or [],
+    }
+
+
+def system_prune(
+    *,
+    containers: bool = True,
+    images: bool = True,
+    volumes: bool = False,
+    networks: bool = True,
+    dangling_images_only: bool = True,
+) -> dict[str, Any]:
+    c = get_client()
+    result: dict[str, Any] = {"space_reclaimed": 0}
+
+    if containers:
+        r = c.containers.prune()
+        result["containers_deleted"] = r.get("ContainersDeleted") or []
+        result["space_reclaimed"] += r.get("SpaceReclaimed") or 0
+
+    if images:
+        filters = {"dangling": True} if dangling_images_only else None
+        r = c.images.prune(filters=filters)
+        result["images_deleted"] = r.get("ImagesDeleted") or []
+        result["space_reclaimed"] += r.get("SpaceReclaimed") or 0
+
+    if volumes:
+        r = c.volumes.prune()
+        result["volumes_deleted"] = r.get("VolumesDeleted") or []
+        result["space_reclaimed"] += r.get("SpaceReclaimed") or 0
+
+    if networks:
+        r = c.networks.prune()
+        result["networks_deleted"] = r.get("NetworksDeleted") or []
+
+    return result

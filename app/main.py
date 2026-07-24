@@ -4,8 +4,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel, Field
@@ -22,7 +22,27 @@ from compose_mgr import (
 from config import get_settings
 from db import audit, init_db
 from docker_client import get_container, list_containers, ping, refresh_template_name_cache
+from docker_resources import (
+    images_list,
+    images_prune,
+    images_pull,
+    images_remove,
+    lifecycle,
+    networks_create,
+    networks_list,
+    networks_remove,
+    sys_df,
+    sys_info,
+    sys_prune,
+    volumes_create,
+    volumes_list,
+    volumes_prune,
+    volumes_remove,
+)
 from doctor import diagnose_all, diagnose_one
+from events_stream import recent_events, sse_docker_events
+from host_platform import platform_info
+from logs_stream import get_logs, sse_log_events
 from manager import managers_summary
 from monitor import collect_report, get_latest_or_collect
 from ops import backup_container, records, rollback_guide, safe_update
@@ -36,16 +56,17 @@ from unraid_mgr import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
+VERSION = "0.3.0"
 settings = get_settings()
 init_db()
 
 app = FastAPI(
     title="DockerOps",
     description=(
-        "面向 NAS 的 Docker 运维平台 — Compose 双方接管、Unraid 模板升级、"
-        "安全更新、Doctor 诊断、监控与可追溯运维。"
+        "面向 NAS 的 Docker 运维平台 — 日常运维（生命周期/日志/镜像/网络/卷）、"
+        "Compose 与 Unraid/飞牛引擎级双方接管、安全更新、Doctor 诊断。"
     ),
-    version="0.2.0",
+    version=VERSION,
     docs_url="/docs",
     redoc_url="/redoc",
 )
@@ -73,6 +94,35 @@ class UnraidUpdateBody(BaseModel):
     recreate: bool = True
 
 
+class PullBody(BaseModel):
+    image: str = Field(..., description="镜像名:tag")
+
+
+class NetworkCreateBody(BaseModel):
+    name: str
+    driver: str = "bridge"
+    internal: bool = False
+    attachable: bool = False
+
+
+class VolumeCreateBody(BaseModel):
+    name: str
+    driver: str = "local"
+
+
+class PruneBody(BaseModel):
+    containers: bool = True
+    images: bool = True
+    volumes: bool = False
+    networks: bool = True
+    dangling_images_only: bool = True
+
+
+class RemoveBody(BaseModel):
+    force: bool = False
+    volumes: bool = False
+
+
 def _takeover_or_403() -> None:
     try:
         get_settings().takeover_guard()
@@ -80,16 +130,37 @@ def _takeover_or_403() -> None:
         raise HTTPException(status_code=403, detail=str(e)) from e
 
 
+def _resource_or_403() -> None:
+    if not get_settings().resource_apis:
+        raise HTTPException(status_code=403, detail="资源 API 已关闭（DOCKEROPS_RESOURCE_APIS=false）")
+
+
+def _perm_http(fn, *args, **kwargs):
+    try:
+        return fn(*args, **kwargs)
+    except PermissionError as e:
+        raise HTTPException(status_code=403, detail=str(e)) from e
+    except KeyError:
+        raise HTTPException(status_code=404, detail="资源不存在") from None
+
+
 @app.on_event("startup")
 def _startup() -> None:
     settings.ensure_dirs()
     refresh_template_name_cache()
+    plat = {}
+    try:
+        plat = platform_info()
+    except Exception as e:
+        plat = {"error": str(e)}
     audit(
         "startup",
         actor="system",
         detail={
-            "version": "0.2.0",
+            "version": VERSION,
             "takeover_enabled": settings.takeover_enabled,
+            "resource_apis": settings.resource_apis,
+            "platform": plat.get("platform"),
             "unraid_templates": templates_available(),
         },
     )
@@ -98,15 +169,29 @@ def _startup() -> None:
 @app.get("/api/health")
 def api_health() -> dict[str, Any]:
     engine = ping()
+    try:
+        plat = platform_info()
+        platform_name = plat.get("platform")
+    except Exception:
+        platform_name = "unknown"
     return {
         "ok": True,
         "service": "dockerops",
-        "version": "0.2.0",
+        "version": VERSION,
         "time": time.time(),
         "docker": engine,
+        "platform": platform_name,
         "takeover_enabled": get_settings().takeover_enabled,
+        "resource_apis": get_settings().resource_apis,
         "unraid_templates_available": templates_available(),
     }
+
+
+@app.get("/api/platform")
+def api_platform(actor: OptionalUser = None) -> dict[str, Any]:
+    info = platform_info()
+    info["viewer"] = actor
+    return info
 
 
 @app.get("/api/managers/summary")
@@ -155,6 +240,225 @@ def api_container(container_id: str, actor: OptionalUser) -> dict[str, Any]:
     except Exception as e:
         raise HTTPException(status_code=503, detail=f"Docker 不可用：{e}") from e
     return {"ok": True, "item": item, "viewer": actor}
+
+
+# ── Lifecycle ──────────────────────────────────────────────
+
+
+@app.post("/api/containers/{container_id}/start")
+def api_start(container_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "start", container_id, actor=actor)
+
+
+@app.post("/api/containers/{container_id}/stop")
+def api_stop(container_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "stop", container_id, actor=actor)
+
+
+@app.post("/api/containers/{container_id}/restart")
+def api_restart(container_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "restart", container_id, actor=actor)
+
+
+@app.post("/api/containers/{container_id}/pause")
+def api_pause(container_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "pause", container_id, actor=actor)
+
+
+@app.post("/api/containers/{container_id}/unpause")
+def api_unpause(container_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "unpause", container_id, actor=actor)
+
+
+@app.post("/api/containers/{container_id}/kill")
+def api_kill(container_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "kill", container_id, actor=actor)
+
+
+@app.delete("/api/containers/{container_id}")
+def api_remove_container(
+    container_id: str,
+    actor: AuthUser,
+    force: bool = False,
+    volumes: bool = False,
+) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(lifecycle, "remove", container_id, actor=actor, force=force, volumes=volumes)
+
+
+# ── Logs ───────────────────────────────────────────────────
+
+
+@app.get("/api/containers/{container_id}/logs")
+def api_logs(
+    container_id: str,
+    actor: OptionalUser = None,
+    tail: int = Query(200, ge=1, le=10000),
+    timestamps: bool = True,
+    follow: bool = False,
+    since: int | None = None,
+):
+    _resource_or_403()
+    if follow:
+        return StreamingResponse(
+            sse_log_events(container_id, tail=min(tail, 500), timestamps=timestamps),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    try:
+        result = get_logs(container_id, tail=tail, timestamps=timestamps, since=since)
+        result["viewer"] = actor
+        return result
+    except KeyError:
+        raise HTTPException(status_code=404, detail="容器不存在") from None
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e)) from e
+
+
+# ── Images ─────────────────────────────────────────────────
+
+
+@app.get("/api/images")
+def api_images(actor: OptionalUser = None) -> dict[str, Any]:
+    _resource_or_403()
+    result = images_list()
+    result["viewer"] = actor
+    return result
+
+
+@app.post("/api/images/pull")
+def api_images_pull(body: PullBody, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(images_pull, body.image, actor=actor)
+
+
+@app.post("/api/images/prune")
+def api_images_prune(actor: AuthUser, dangling: bool = True) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(images_prune, actor=actor, dangling=dangling)
+
+
+@app.delete("/api/images/{image_id:path}")
+def api_images_remove(image_id: str, actor: AuthUser, force: bool = False) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(images_remove, image_id, actor=actor, force=force)
+
+
+# ── Networks ───────────────────────────────────────────────
+
+
+@app.get("/api/networks")
+def api_networks(actor: OptionalUser = None) -> dict[str, Any]:
+    _resource_or_403()
+    result = networks_list()
+    result["viewer"] = actor
+    return result
+
+
+@app.post("/api/networks")
+def api_networks_create(body: NetworkCreateBody, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(
+        networks_create,
+        body.name,
+        actor=actor,
+        driver=body.driver,
+        internal=body.internal,
+        attachable=body.attachable,
+    )
+
+
+@app.delete("/api/networks/{network_id}")
+def api_networks_remove(network_id: str, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(networks_remove, network_id, actor=actor)
+
+
+# ── Volumes ────────────────────────────────────────────────
+
+
+@app.get("/api/volumes")
+def api_volumes(actor: OptionalUser = None) -> dict[str, Any]:
+    _resource_or_403()
+    result = volumes_list()
+    result["viewer"] = actor
+    return result
+
+
+@app.post("/api/volumes")
+def api_volumes_create(body: VolumeCreateBody, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(volumes_create, body.name, actor=actor, driver=body.driver)
+
+
+@app.post("/api/volumes/prune")
+def api_volumes_prune(actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(volumes_prune, actor=actor)
+
+
+@app.delete("/api/volumes/{name}")
+def api_volumes_remove(name: str, actor: AuthUser, force: bool = False) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(volumes_remove, name, actor=actor, force=force)
+
+
+# ── System / Events ────────────────────────────────────────
+
+
+@app.get("/api/system/info")
+def api_system_info(actor: OptionalUser = None) -> dict[str, Any]:
+    _resource_or_403()
+    result = sys_info()
+    result["viewer"] = actor
+    return result
+
+
+@app.get("/api/system/df")
+def api_system_df(actor: OptionalUser = None) -> dict[str, Any]:
+    _resource_or_403()
+    result = sys_df()
+    result["viewer"] = actor
+    return result
+
+
+@app.post("/api/system/prune")
+def api_system_prune(body: PruneBody, actor: AuthUser) -> dict[str, Any]:
+    _resource_or_403()
+    return _perm_http(
+        sys_prune,
+        actor=actor,
+        containers=body.containers,
+        images=body.images,
+        volumes=body.volumes,
+        networks=body.networks,
+        dangling_images_only=body.dangling_images_only,
+    )
+
+
+@app.get("/api/events")
+def api_events(
+    actor: OptionalUser = None,
+    limit: int = Query(50, ge=1, le=500),
+    since_seconds: int = Query(3600, ge=60, le=86400),
+    follow: bool = False,
+):
+    _resource_or_403()
+    if follow:
+        return StreamingResponse(
+            sse_docker_events(),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+        )
+    result = recent_events(limit=limit, since_seconds=since_seconds)
+    result["viewer"] = actor
+    return result
 
 
 @app.get("/api/doctor")
@@ -293,7 +597,7 @@ def index(request: Request) -> HTMLResponse:
         {
             "request": request,
             "title": "DockerOps",
-            "subtitle": "面向 NAS 的 Docker 运维平台 · Compose / Unraid 双方接管",
+            "subtitle": "NAS 日常运维 · 取代 Portainer 场景 · Tower / 飞牛引擎级接管",
         },
     )
 

@@ -110,10 +110,21 @@ def managers_summary(containers: list[dict[str, Any]]) -> dict[str, Any]:
     compose_dirs = [str(p) for p in settings.compose_dirs()]
     compose_dirs_ok = [str(p) for p in settings.compose_dirs() if p.is_dir()]
 
+    # Lazy import avoids circular deps at module load
+    from host_platform import detect_platform
+
+    try:
+        host_platform = detect_platform()
+    except Exception:
+        host_platform = "generic"
+
     return {
         "ok": True,
-        "version": "0.2.0",
+        "version": "0.3.0",
+        "platform": host_platform,
         "takeover_enabled": settings.takeover_enabled,
+        "resource_apis": settings.resource_apis,
+        "console_enabled": settings.console_enabled,
         "compose_enabled": settings.compose_enabled,
         "unraid_enabled": settings.unraid_enabled,
         "counts": counts,
@@ -143,14 +154,20 @@ def os_access_write(path: Path) -> bool:
 def _hints(settings, unraid_ok: bool) -> list[str]:
     tips: list[str] = []
     if not settings.takeover_enabled:
-        tips.append("完整接管关闭：仅备份/诊断/拉镜像；开启 DOCKEROPS_TAKEOVER_ENABLED=true 后可 compose up/down 与 Unraid 模板重建。")
+        tips.append(
+            "完整接管关闭：登录后可启停/日志；删除/prune/compose up-down/模板重建需 DOCKEROPS_TAKEOVER_ENABLED=true。"
+        )
     else:
         tips.append("完整接管已开启：请确认 docker.sock 为读写挂载，并限制内网访问。")
+    if settings.resource_apis:
+        tips.append("资源 API 已启用：容器生命周期、镜像、网络、卷、系统清理（可日常替代 Portainer）。")
     if settings.unraid_enabled and not unraid_ok:
         tips.append(
             f"未检测到 Unraid 模板目录 {settings.unraid_templates_user}。"
             "请挂载 /boot/config/plugins/dockerMan/templates-user → /unraid/templates-user。"
         )
-    if settings.compose_enabled and settings.takeover_enabled and not settings.compose_dirs():
-        tips.append("建议设置 DOCKEROPS_COMPOSE_PROJECT_DIRS 指向 compose 工程目录，便于双方接管同一项目文件。")
+    if settings.compose_enabled and not settings.compose_dirs():
+        tips.append(
+            "建议设置 DOCKEROPS_COMPOSE_PROJECT_DIRS（飞牛/通用主机挂载 compose 目录），便于引擎级双方接管。"
+        )
     return tips

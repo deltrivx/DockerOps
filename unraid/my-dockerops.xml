@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps — 面向 NAS 的 Docker 运维平台。Compose 双方接管、Unraid 模板安全更新、Doctor 诊断与监控。镜像仅由 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.3 — 面向 NAS 的 Docker 运维平台。日常运维（启停/日志/镜像/网络/卷）可替代 Portainer 场景；Unraid 模板安全更新保持 dockerman；Compose 与飞牛引擎级双方接管。镜像仅由 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>
@@ -27,7 +27,10 @@
   <Config Name="Unraid Templates" Target="/unraid/templates-user" Default="/boot/config/plugins/dockerMan/templates-user" Mode="rw" Description="dockerMan 用户模板目录，用于 Unraid 双方接管（非三方）" Type="Path" Display="always" Required="false" Mask="false">/boot/config/plugins/dockerMan/templates-user</Config>
   <Config Name="Admin User" Target="DOCKEROPS_ADMIN_USER" Default="admin" Mode="" Description="管理员用户名" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
   <Config Name="Admin Password" Target="DOCKEROPS_ADMIN_PASSWORD" Default="dockerops" Mode="" Description="管理员密码（请修改）" Type="Variable" Display="always" Required="true" Mask="true">dockerops</Config>
-  <Config Name="Takeover Enabled" Target="DOCKEROPS_TAKEOVER_ENABLED" Default="false" Mode="" Description="true=完整接管（compose up/down、模板重建、Adopt）" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Takeover Enabled" Target="DOCKEROPS_TAKEOVER_ENABLED" Default="false" Mode="" Description="true=完整接管（compose up/down、模板重建、Adopt、删除/prune）" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
+  <Config Name="Platform" Target="DOCKEROPS_PLATFORM" Default="unraid" Mode="" Description="auto|unraid|fnos|generic" Type="Variable" Display="advanced" Required="false" Mask="false">unraid</Config>
+  <Config Name="Resource APIs" Target="DOCKEROPS_RESOURCE_APIS" Default="true" Mode="" Description="启停/日志/镜像/网络/卷等日常运维 API" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Console Enabled" Target="DOCKEROPS_CONSOLE_ENABLED" Default="false" Mode="" Description="Web 终端（高风险，默认关）" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
   <Config Name="Compose Enabled" Target="DOCKEROPS_COMPOSE_ENABLED" Default="true" Mode="" Description="启用 Compose 项目发现" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
   <Config Name="Compose Project Dirs" Target="DOCKEROPS_COMPOSE_PROJECT_DIRS" Default="" Mode="" Description="额外扫描的 compose 目录，容器内路径，冒号分隔" Type="Variable" Display="advanced" Required="false" Mask="false"/>
   <Config Name="Unraid Enabled" Target="DOCKEROPS_UNRAID_ENABLED" Default="true" Mode="" Description="启用 Unraid 模板管理" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>

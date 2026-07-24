@@ -29,7 +29,7 @@ class Settings(BaseSettings):
     secret_key: str = ""
     session_ttl_hours: int = 24
 
-    # Optional full takeover (compose up/down, unraid recreate, adopt)
+    # Optional full takeover (compose up/down, unraid recreate, adopt, prune/remove)
     takeover_enabled: bool = False
     compose_enabled: bool = True
     compose_bin: str = "docker"
@@ -38,10 +38,19 @@ class Settings(BaseSettings):
     unraid_templates_user: str = "/unraid/templates-user"
     unraid_docker_cfg: str = "/unraid/docker.cfg"
 
+    # Host platform: auto | unraid | fnos | generic
+    platform: str = "auto"
+    # Portainer-like daily resource APIs (lifecycle/logs/images/nets/vols/system)
+    resource_apis: bool = True
+    # Web exec console (high risk); default off for v0.3
+    console_enabled: bool = False
+
     @field_validator(
         "takeover_enabled",
         "compose_enabled",
         "unraid_enabled",
+        "resource_apis",
+        "console_enabled",
         mode="before",
     )
     @classmethod

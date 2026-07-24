@@ -16,6 +16,7 @@
       </div>
     </div>
     <div class="header-actions">
+      <div id="platform-badge" class="badge">平台: --</div>
       <div id="takeover-badge" class="badge">接管: --</div>
       <div id="auth-state" class="muted">未登录（只读）</div>
       <button id="btn-refresh" class="btn">刷新</button>
@@ -23,24 +24,66 @@
     </div>
   </header>
 
+  <nav class="tabs" id="main-tabs">
+    <button type="button" class="tab active" data-tab="overview">总览</button>
+    <button type="button" class="tab" data-tab="containers">容器</button>
+    <button type="button" class="tab" data-tab="compose">Compose</button>
+    <button type="button" class="tab" data-tab="unraid">Unraid</button>
+    <button type="button" class="tab" data-tab="images">镜像</button>
+    <button type="button" class="tab" data-tab="networks">网络</button>
+    <button type="button" class="tab" data-tab="volumes">卷</button>
+    <button type="button" class="tab" data-tab="system">系统</button>
+  </nav>
+
   <main class="grid">
-    <section class="card score-card">
+    <section class="card score-card tab-panel" data-panel="overview">
       <h2>健康分</h2>
       <div id="health-score" class="score">--</div>
       <div id="health-label" class="badge">加载中</div>
       <ul id="advice" class="advice"></ul>
     </section>
 
-    <section class="card">
-      <h2>管理源 / 引擎</h2>
+    <section class="card tab-panel" data-panel="overview">
+      <h2>管理源 / 平台 / 引擎</h2>
       <pre id="engine-info" class="mono">加载中…</pre>
     </section>
 
-    <section class="card wide">
+    <section class="card wide tab-panel" data-panel="overview">
+      <h2>近期 Docker 事件</h2>
+      <div id="events-list" class="events muted">加载中…</div>
+    </section>
+
+    <section class="card wide tab-panel" data-panel="overview">
+      <h2>Doctor 发现</h2>
+      <div id="findings" class="findings">加载中…</div>
+    </section>
+
+    <section class="card wide tab-panel" data-panel="overview">
+      <h2>运维记录</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>动作</th>
+              <th>目标</th>
+              <th>状态</th>
+              <th>操作者</th>
+            </tr>
+          </thead>
+          <tbody id="ops-rows">
+            <tr><td colspan="5" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card wide tab-panel" data-panel="containers" hidden>
       <div class="row-between">
         <h2>容器</h2>
         <span id="container-count" class="muted"></span>
       </div>
+      <p class="muted small">启停/重启/日志：登录即可。删除容器需开启完整接管。Unraid 应用请优先用「模板更新」，勿裸删重建以免变三方。</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -61,12 +104,12 @@
       </div>
     </section>
 
-    <section class="card wide">
+    <section class="card wide tab-panel" data-panel="compose" hidden>
       <div class="row-between">
         <h2>Compose 项目</h2>
         <span id="compose-count" class="muted"></span>
       </div>
-      <p class="muted small">与原系统共享同一 compose 工程；开启接管后可 up/down，双方均可修改部署。</p>
+      <p class="muted small">与原系统（含飞牛 Docker UI / Unraid Compose 插件）共享同一 compose 工程；开启接管后可 up/down。</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -85,12 +128,12 @@
       </div>
     </section>
 
-    <section class="card wide">
+    <section class="card wide tab-panel" data-panel="unraid" hidden>
       <div class="row-between">
         <h2>Unraid 模板</h2>
         <span id="unraid-count" class="muted"></span>
       </div>
-      <p class="muted small">按 dockerMan <code>my-*.xml</code> 模板备份/升级（非 docker run 拼接），保持 dockerman 管理，避免三方。</p>
+      <p class="muted small">按 dockerMan <code>my-*.xml</code> 模板备份/升级（非 docker run 拼接），保持 dockerman，避免三方。</p>
       <div class="table-wrap">
         <table>
           <thead>
@@ -109,28 +152,98 @@
       </div>
     </section>
 
-    <section class="card wide">
-      <h2>Doctor 发现</h2>
-      <div id="findings" class="findings">加载中…</div>
-    </section>
-
-    <section class="card wide">
-      <h2>运维记录</h2>
+    <section class="card wide tab-panel" data-panel="images" hidden>
+      <div class="row-between">
+        <h2>镜像</h2>
+        <div class="actions">
+          <span id="image-count" class="muted"></span>
+          <button type="button" class="btn small" id="btn-image-pull">拉取</button>
+          <button type="button" class="btn small danger" id="btn-image-prune">清理 dangling</button>
+        </div>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>时间</th>
-              <th>动作</th>
-              <th>目标</th>
-              <th>状态</th>
-              <th>操作者</th>
+              <th>标签 / ID</th>
+              <th>大小</th>
+              <th>创建</th>
+              <th>操作</th>
             </tr>
           </thead>
-          <tbody id="ops-rows">
+          <tbody id="image-rows">
+            <tr><td colspan="4" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card wide tab-panel" data-panel="networks" hidden>
+      <div class="row-between">
+        <h2>网络</h2>
+        <div class="actions">
+          <span id="network-count" class="muted"></span>
+          <button type="button" class="btn small" id="btn-net-create">创建</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>驱动</th>
+              <th>子网</th>
+              <th>容器数</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="network-rows">
             <tr><td colspan="5" class="muted">加载中…</td></tr>
           </tbody>
         </table>
+      </div>
+    </section>
+
+    <section class="card wide tab-panel" data-panel="volumes" hidden>
+      <div class="row-between">
+        <h2>数据卷</h2>
+        <div class="actions">
+          <span id="volume-count" class="muted"></span>
+          <button type="button" class="btn small" id="btn-vol-create">创建</button>
+          <button type="button" class="btn small danger" id="btn-vol-prune">清理未使用</button>
+        </div>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>名称</th>
+              <th>驱动</th>
+              <th>挂载点</th>
+              <th>操作</th>
+            </tr>
+          </thead>
+          <tbody id="volume-rows">
+            <tr><td colspan="4" class="muted">加载中…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card wide tab-panel" data-panel="system" hidden>
+      <div class="row-between">
+        <h2>系统</h2>
+        <button type="button" class="btn small danger" id="btn-sys-prune">系统清理</button>
+      </div>
+      <div class="split">
+        <div>
+          <h3 class="subh">Engine Info</h3>
+          <pre id="sys-info" class="mono">加载中…</pre>
+        </div>
+        <div>
+          <h3 class="subh">磁盘占用 (df)</h3>
+          <pre id="sys-df" class="mono">加载中…</pre>
+        </div>
       </div>
     </section>
   </main>
@@ -148,8 +261,17 @@
     </form>
   </dialog>
 
+  <dialog id="logs-dialog" class="logs-dialog">
+    <div class="row-between">
+      <h3 id="logs-title">容器日志</h3>
+      <button type="button" class="btn small" id="logs-close">关闭</button>
+    </div>
+    <pre id="logs-body" class="mono logs-body">…</pre>
+  </dialog>
+
   <footer class="foot muted">
-    Compose / Unraid 双方接管 · 写操作需登录 · 破坏性操作需开启接管 ·
+    v0.3 · 日常运维全覆盖 · Tower 模板 / 飞牛 Compose 引擎级接管 ·
+    删除与 prune 需开启接管 ·
     <a href="/docs" target="_blank" rel="noopener">Swagger</a>
   </footer>
 

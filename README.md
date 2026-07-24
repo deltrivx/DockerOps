@@ -11,7 +11,8 @@ DockerOps 是一款专为 NAS、家庭服务器和轻量运维场景设计的 Do
 
 目标很明确：让 Docker 更新更安全、问题排查更简单、日常运维更省心。
 
-> Web 控制台展示管理源（Compose / Unraid / 三方）；写操作需登录。**完整接管**（compose up/down、Unraid 模板重建、Adopt）默认关闭，开启后与原系统**双方接管**同一 compose 工程或 dockerMan 模板。镜像由 **GitHub Actions 远程构建** 发布到 GHCR，不在本机构建上传。
+> **v0.3**：日常运维全覆盖（容器启停/日志/镜像/网络/卷/系统清理/事件），可在 NAS 场景替代 Portainer-CE 的日常使用；保留 Doctor / 安全更新差异化。  
+> 管理源：Compose / Unraid / 三方。**完整接管**默认关闭；开启后与 Unraid 模板或飞牛/通用 Compose **引擎级双方接管**。镜像仅由 **GitHub Actions → GHCR** 构建，禁止本机构建再上传。
 
 ---
 
@@ -129,6 +130,27 @@ DockerOps 会记录关键运维动作和诊断结果，方便你回头查看：
 
 仓库提供 [`unraid/my-dockerops.xml`](unraid/my-dockerops.xml)，可将 DockerOps 自身装为 Unraid 应用。
 
+### 10. 日常运维资源中心（v0.3，Portainer 日常替代）
+
+登录后即可：
+
+- 容器 **启动 / 停止 / 重启 / 暂停**、查看日志
+- 镜像列表 / 拉取；网络与卷列表
+- Docker 事件、Engine info / df
+
+开启完整接管后额外支持：
+
+- 删除容器、删除镜像、创建/删除网络与卷、prune、系统清理
+
+### 11. 双 NAS 平台探测
+
+自动识别 `unraid` / `fnos` / `generic`（`GET /api/platform`），并给出挂载建议。
+
+| 主机 | 接管方式 | 文档 |
+|------|----------|------|
+| Unraid (Tower) | dockerMan 模板 + 可选 Compose | [`unraid/my-dockerops.xml`](unraid/my-dockerops.xml) |
+| 飞牛 (FnOS) | **引擎级 Compose**（不深绑 AppCenter） | [`fnos/README.md`](fnos/README.md) |
+
 ---
 
 ## 设计理念
@@ -206,19 +228,36 @@ Swagger：`http://<host>:8080/docs`
 | `DOCKEROPS_ADMIN_PASSWORD` | `dockerops` | 管理员密码（务必修改） |
 | `DOCKEROPS_API_TOKEN` | （空） | 可选固定 API Token；为空则登录后颁发会话 Token |
 | `DOCKEROPS_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker 引擎地址 |
-| `DOCKEROPS_TAKEOVER_ENABLED` | `false` | 完整接管：compose up/down、模板重建、Adopt |
+| `DOCKEROPS_PLATFORM` | `auto` | `auto` / `unraid` / `fnos` / `generic` |
+| `DOCKEROPS_RESOURCE_APIS` | `true` | 生命周期/日志/镜像/网络/卷/系统 API |
+| `DOCKEROPS_CONSOLE_ENABLED` | `false` | Web 终端（高风险，默认关） |
+| `DOCKEROPS_TAKEOVER_ENABLED` | `false` | 完整接管：compose up/down、模板重建、Adopt、删除/prune |
 | `DOCKEROPS_COMPOSE_ENABLED` | `true` | 启用 Compose 发现 |
 | `DOCKEROPS_COMPOSE_PROJECT_DIRS` | （空） | 额外 compose 目录，`:` 分隔 |
 | `DOCKEROPS_UNRAID_ENABLED` | `true` | 启用 Unraid 模板 |
 | `DOCKEROPS_UNRAID_TEMPLATES_USER` | `/unraid/templates-user` | 容器内模板路径 |
 | `TZ` | `Asia/Shanghai` | 时区 |
 
-### Unraid 挂载约定
+### Unraid (Tower) 挂载约定
 
 ```text
 /boot/config/plugins/dockerMan/templates-user  →  /unraid/templates-user
 /var/run/docker.sock                           →  /var/run/docker.sock   (接管时用 rw)
 ```
+
+推荐用 [`unraid/my-dockerops.xml`](unraid/my-dockerops.xml) 安装，保证 DockerOps 自身为 dockerman 应用。
+
+### 飞牛 (FnOS) 挂载约定
+
+```text
+/var/run/docker.sock     →  同左 (接管 rw)
+/vol1/docker/compose     →  /compose   （路径按实机调整）
+DOCKEROPS_PLATFORM=fnos
+DOCKEROPS_COMPOSE_PROJECT_DIRS=/compose
+DOCKEROPS_UNRAID_ENABLED=false
+```
+
+详见 [`fnos/README.md`](fnos/README.md) 与 [`fnos/docker-compose.yml`](fnos/docker-compose.yml)。
 
 ### 完整接管 Compose 示例
 
@@ -228,6 +267,14 @@ docker compose --profile takeover up -d
 # 并设置 DOCKEROPS_COMPOSE_PROJECT_DIRS=/compose 与对应 volume
 ```
 
+### 权限模型
+
+| 操作 | 条件 |
+|------|------|
+| 列表 / Doctor / 日志 | 可选登录 |
+| 启停 / 重启 / 暂停 / 拉镜像 | 登录 |
+| 删除 / prune / 建删网络卷 / compose up-down / 模板重建 / Adopt | 登录 + `TAKEOVER=true` |
+
 ---
 
 ## API 概览
@@ -235,28 +282,23 @@ docker compose --profile takeover up -d
 | 方法 | 路径 | 说明 |
 |---|---|---|
 | `GET` | `/api/health` | 服务健康 |
-| `GET` | `/api/managers/summary` | 管理源统计 / 接管状态 / 挂载提示 |
-| `POST` | `/api/auth/login` | 登录，获取 Token |
-| `GET` | `/api/containers` | 容器列表（含 manager 分类） |
-| `GET` | `/api/containers/{id}` | 容器详情 |
-| `GET` | `/api/doctor` | 全局 Doctor 诊断 + 健康分 |
-| `GET` | `/api/doctor/{id}` | 单容器诊断 |
-| `GET` | `/api/monitor/report` | 监控报告 |
-| `GET` | `/api/ops/records` | 运维记录 |
-| `POST` | `/api/ops/backup/{id}` | 按管理源备份 |
-| `POST` | `/api/ops/update/{id}` | 按管理源安全更新（分流 compose/unraid/三方） |
-| `POST` | `/api/ops/rollback/{id}` | 回滚指引 |
-| `GET` | `/api/compose/projects` | Compose 项目列表 |
-| `POST` | `/api/compose/projects/{name}/backup` | 项目备份 |
-| `POST` | `/api/compose/projects/{name}/update` | 项目安全更新 |
-| `POST` | `/api/compose/projects/{name}/up` | compose up（需接管） |
-| `POST` | `/api/compose/projects/{name}/down` | compose down（需接管） |
-| `GET` | `/api/unraid/templates` | Unraid 模板列表 |
-| `POST` | `/api/unraid/templates/{name}/backup` | 模板备份 |
-| `POST` | `/api/unraid/templates/{name}/update` | 模板安全升级 |
-| `POST` | `/api/unraid/adopt/{id}` | 三方 Adopt 为 dockerman（需接管） |
+| `GET` | `/api/platform` | 平台探测与挂载建议 |
+| `GET` | `/api/managers/summary` | 管理源统计 / 接管状态 |
+| `POST` | `/api/auth/login` | 登录 |
+| `GET` | `/api/containers` | 容器列表（含 manager） |
+| `POST` | `/api/containers/{id}/start\|stop\|restart\|pause\|unpause\|kill` | 生命周期（登录） |
+| `DELETE` | `/api/containers/{id}` | 删除（需接管） |
+| `GET` | `/api/containers/{id}/logs` | 日志；`follow=1` 为 SSE |
+| `GET` | `/api/images` · `POST /api/images/pull` · `DELETE /api/images/{id}` · `POST /api/images/prune` | 镜像 |
+| `GET\|POST\|DELETE` | `/api/networks` · `/api/volumes` | 网络 / 卷 |
+| `GET` | `/api/system/info` · `/api/system/df` | 系统信息 |
+| `POST` | `/api/system/prune` | 系统清理（需接管） |
+| `GET` | `/api/events` | 近期事件；`follow=1` 为 SSE |
+| `GET` | `/api/doctor` · `/api/monitor/report` · `/api/ops/*` | 诊断 / 监控 / 安全更新 |
+| `GET\|POST` | `/api/compose/projects...` | Compose 项目 |
+| `GET\|POST` | `/api/unraid/templates...` · `/api/unraid/adopt/{id}` | Unraid 模板 |
 
-写操作需要 `Authorization: Bearer <token>`。破坏性接管另需 `DOCKEROPS_TAKEOVER_ENABLED=true`。
+完整列表见 Swagger：`/docs`。
 
 ---
 
@@ -289,18 +331,18 @@ ghcr.io/deltrivx/dockerops
 ```text
 DockerOps/
 ├── app/
-│   ├── main.py            # FastAPI 入口
-│   ├── manager.py         # 管理源分类
-│   ├── compose_mgr.py     # Compose 发现 / 备份 / 接管
-│   ├── unraid_mgr.py      # Unraid 模板读写 / 重建 / Adopt
-│   ├── ops.py             # 统一备份 / 更新分流
-│   ├── docker_client.py
-│   ├── doctor.py / monitor.py / auth.py / db.py
+│   ├── main.py              # FastAPI 入口 v0.3
+│   ├── host_platform.py     # Unraid / 飞牛 / generic 探测
+│   ├── docker_resources.py  # 日常资源运维
+│   ├── logs_stream.py · events_stream.py
+│   ├── manager.py · compose_mgr.py · unraid_mgr.py · ops.py
+│   ├── docker_client.py · doctor.py · monitor.py · auth.py · db.py
 │   ├── static/ · templates/
 ├── unraid/my-dockerops.xml
-├── .github/workflows/     # 远程构建 GHCR
-├── Dockerfile             # 含 docker CLI + compose plugin
-├── docker-compose.yml     # 含 takeover profile
+├── fnos/docker-compose.yml · fnos/README.md
+├── .github/workflows/       # 远程构建 GHCR
+├── Dockerfile
+├── docker-compose.yml
 └── README.md
 ```
 
@@ -324,7 +366,11 @@ DockerOps/
 - [x] Compose 项目发现与双方接管
 - [x] Unraid 模板备份 / 升级 / Adopt（非三方）
 - [x] 可选完整接管开关
-- [ ] 更新向导 UI 增强
+- [x] 日常运维资源 API + UI（生命周期/日志/镜像/网络/卷/系统）
+- [x] 平台探测（Unraid / 飞牛）与飞牛引擎级部署配方
+- [ ] Compose 栈文件编辑 / 更新检测
+- [ ] 一键回滚执行（当前为指引）
+- [ ] Web 终端（可选）
 - [ ] 更细粒度的 RBAC
 - [ ] 通知渠道（Webhook / 邮件）
 

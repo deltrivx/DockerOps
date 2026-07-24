@@ -19,6 +19,9 @@ services:
       DOCKEROPS_API_TOKEN: ${DOCKEROPS_API_TOKEN:-}
       DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
       DOCKEROPS_TAKEOVER_ENABLED: ${DOCKEROPS_TAKEOVER_ENABLED:-false}
+      DOCKEROPS_PLATFORM: ${DOCKEROPS_PLATFORM:-auto}
+      DOCKEROPS_RESOURCE_APIS: ${DOCKEROPS_RESOURCE_APIS:-true}
+      DOCKEROPS_CONSOLE_ENABLED: ${DOCKEROPS_CONSOLE_ENABLED:-false}
       DOCKEROPS_COMPOSE_ENABLED: ${DOCKEROPS_COMPOSE_ENABLED:-true}
       DOCKEROPS_COMPOSE_PROJECT_DIRS: ${DOCKEROPS_COMPOSE_PROJECT_DIRS:-}
       DOCKEROPS_UNRAID_ENABLED: ${DOCKEROPS_UNRAID_ENABLED:-true}
@@ -29,7 +32,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       # Unraid：取消注释以双方接管模板
       # - /boot/config/plugins/dockerMan/templates-user:/unraid/templates-user
-      # Compose 工程目录（可选）
+      # Compose 工程目录（可选；飞牛见 fnos/docker-compose.yml）
       # - /path/to/compose-projects:/compose:ro
     healthcheck:
       test:
@@ -65,6 +68,9 @@ services:
       DOCKEROPS_API_TOKEN: ${DOCKEROPS_API_TOKEN:-}
       DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
       DOCKEROPS_TAKEOVER_ENABLED: "true"
+      DOCKEROPS_PLATFORM: ${DOCKEROPS_PLATFORM:-auto}
+      DOCKEROPS_RESOURCE_APIS: "true"
+      DOCKEROPS_CONSOLE_ENABLED: "false"
       DOCKEROPS_COMPOSE_ENABLED: "true"
       DOCKEROPS_COMPOSE_PROJECT_DIRS: ${DOCKEROPS_COMPOSE_PROJECT_DIRS:-/compose}
       DOCKEROPS_UNRAID_ENABLED: "true"
