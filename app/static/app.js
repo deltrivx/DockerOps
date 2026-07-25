@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.3",
+  version: "0.4.4",
   tab: "overview",
   needsSetup: false,
   usernames: [],
@@ -26,6 +26,9 @@ const state = {
     reduce_motion: false,
   },
   selected: new Set(),
+  /** In-flight load token to drop stale overlapping loadAll results. */
+  loadSeq: 0,
+  loading: false,
 };
 
 const PLATFORM_LABEL = {
@@ -700,16 +703,66 @@ function renderOverviewCards({ doctor, health, platform, summary, sysInfo }) {
   setTxt("mgr-third", mc.third_party ?? 0);
 }
 
+function setLoading(on, msg) {
+  state.loading = !!on;
+  const bar = $("#load-banner");
+  if (!bar) return;
+  if (on) {
+    bar.hidden = false;
+    bar.textContent = msg || "加载中…";
+  } else {
+    bar.hidden = true;
+    bar.textContent = "";
+  }
+  const btn = $("#btn-refresh");
+  if (btn) btn.disabled = !!on;
+}
+
+async function loadActivityDeferred(seq) {
+  const meta = $("#activity-meta");
+  const list = $("#activity-list");
+  if (meta) meta.textContent = "采样中…";
+  if (list && !list.children.length) {
+    list.innerHTML = `<div class="muted small">活动容器资源采样中（不阻塞总览）…</div>`;
+  }
+  try {
+    // fewer containers = faster; still useful overview
+    const activity = await api("/api/activity?limit=6").catch(() => ({ items: [] }));
+    if (seq !== state.loadSeq) return;
+    renderActivity(activity.items || []);
+    if (meta) meta.textContent = "CPU / 内存";
+  } catch (e) {
+    if (seq !== state.loadSeq) return;
+    if (meta) meta.textContent = "采样失败";
+    if (list) list.innerHTML = `<div class="muted small">活动采样失败：${escapeHtml(e.message || "")}</div>`;
+  }
+}
+
 async function loadAll() {
+  const seq = ++state.loadSeq;
   setAuthUI();
   try {
     await checkSetup();
-    if (state.needsSetup) return; // forced setup — do not load console data yet
-    if (!state.token) return; // forced login — wait for credentials
+    if (seq !== state.loadSeq) return;
+    if (state.needsSetup) {
+      setLoading(false);
+      return; // forced setup — do not load console data yet
+    }
+    if (!state.token) {
+      setLoading(false);
+      return; // forced login — wait for credentials
+    }
+    setLoading(true, "校验会话…");
     const okSession = await validateSession();
-    if (!okSession) return;
+    if (seq !== state.loadSeq) return;
+    if (!okSession) {
+      setLoading(false);
+      return;
+    }
 
-    const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, activity, sysPack] =
+    setLoading(true, "加载控制台…");
+    // Fast path only — never wait on container stats (activity is deferred)
+    const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, sysPack] =
       await Promise.all([
         api("/api/doctor"),
         api("/api/containers"),
@@ -721,9 +774,10 @@ async function loadAll() {
         api("/api/platform").catch(() => ({ platform: "generic" })),
         api("/api/events?limit=30").catch(() => ({ items: [] })),
         api("/api/prefs").catch(() => ({ prefs: state.prefs })),
-        api("/api/activity?limit=12").catch(() => ({ items: [] })),
         api("/api/system/info").catch(() => ({ info: null })),
       ]);
+
+    if (seq !== state.loadSeq) return;
 
     state.takeover = !!summary.takeover_enabled;
     state.platform = platform.platform || summary.platform || health.platform || "generic";
@@ -733,7 +787,6 @@ async function loadAll() {
     state.unraid = unraid.items || [];
     updateComposeNavVisibility();
     if (prefs.prefs) applyPrefsLocal(prefs.prefs);
-    // ensure particles re-apply after load (prefs may have toggled)
     if (window.DockerOpsParticles) {
       window.DockerOpsParticles.applyPrefs(state.prefs);
     }
@@ -765,7 +818,9 @@ async function loadAll() {
       summary,
       sysInfo: sysPack.info || sysPack || null,
     });
-    renderActivity(activity.items || []);
+
+    // Activity stats are slow (docker stats ~1s/container) — never block first paint
+    loadActivityDeferred(seq);
 
     const ev = $("#events-list");
     const evItems = events.items || [];
@@ -833,7 +888,10 @@ async function loadAll() {
       await loadResources(state.tab);
     }
     if (state.tab === "docs") await loadChangelog();
+    if (seq === state.loadSeq) setLoading(false);
   } catch (e) {
+    if (seq !== state.loadSeq) return;
+    setLoading(false);
     const pc = $("#platform-cards");
     if (pc) pc.innerHTML = kv("错误", e.message);
   }

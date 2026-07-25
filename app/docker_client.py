@@ -346,26 +346,70 @@ def container_stats(container_id: str) -> dict[str, Any]:
 
 
 def list_running_stats(limit: int = 12) -> list[dict[str, Any]]:
-    """Lightweight CPU/mem for running containers (Portainer-style activity)."""
+    """CPU/mem for running containers (Portainer-style activity).
+
+    Docker ``stats(stream=False)`` waits ~1s per container. Collect in parallel
+    with a hard timeout so overview never blocks for tens of seconds.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     c = get_client()
     items = c.containers.list(all=False)
-    out: list[dict[str, Any]] = []
-    for cont in items[: max(1, min(limit, 40))]:
+    selected = items[: max(1, min(int(limit or 12), 24))]
+
+    def _one(cont: Any) -> dict[str, Any]:
         try:
             stats = cont.stats(stream=False)
             parsed = _parse_stats(stats)
         except Exception as e:
             parsed = {"error": str(e)}
-        out.append(
-            {
-                "id": cont.short_id,
-                "name": cont.name,
-                "image": _image_name((cont.attrs or {}).get("Config") or {}),
-                "status": cont.status,
-                "stats": parsed,
-            }
-        )
-    return out
+        return {
+            "id": cont.short_id,
+            "name": cont.name,
+            "image": _image_name((cont.attrs or {}).get("Config") or {}),
+            "status": cont.status,
+            "stats": parsed,
+        }
+
+    if not selected:
+        return []
+
+    out: list[dict[str, Any]] = []
+    # Cap workers; overall wall time ≈ slowest single stats call (~1–2s)
+    workers = min(8, len(selected))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(_one, cont): cont for cont in selected}
+        try:
+            for fut in as_completed(futs, timeout=6):
+                try:
+                    out.append(fut.result(timeout=0.2))
+                except Exception as e:
+                    cont = futs[fut]
+                    out.append(
+                        {
+                            "id": getattr(cont, "short_id", ""),
+                            "name": getattr(cont, "name", ""),
+                            "image": "",
+                            "status": getattr(cont, "status", ""),
+                            "stats": {"error": str(e)},
+                        }
+                    )
+        except TimeoutError:
+            # Partial results are fine; ordered rebuild fills the rest as timeout
+            pass
+    # Stable order: match selected list
+    by_id = {x.get("id"): x for x in out}
+    ordered = []
+    for cont in selected:
+        sid = cont.short_id
+        ordered.append(by_id.get(sid) or {
+            "id": sid,
+            "name": cont.name,
+            "image": _image_name((cont.attrs or {}).get("Config") or {}),
+            "status": cont.status,
+            "stats": {"error": "timeout"},
+        })
+    return ordered
 
 
 def image_history(image_id: str) -> list[dict[str, Any]]:

@@ -867,6 +867,19 @@ body.auth-locked .shell {
   user-select: none;
 }
 
+.load-banner {
+  margin: 0;
+  padding: 0.45rem 1rem;
+  font-size: 0.85rem;
+  color: var(--cyan);
+  background: linear-gradient(90deg, rgba(0, 243, 255, 0.12), rgba(108, 92, 231, 0.08));
+  border-bottom: 1px solid var(--border-strong);
+  letter-spacing: 0.02em;
+}
+.load-banner[hidden] {
+  display: none !important;
+}
+
 .error { color: var(--bad); margin: 0; font-size: 0.85rem; }
 
 .logs-dialog, .detail-dialog {

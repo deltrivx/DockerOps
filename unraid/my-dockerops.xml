@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DockerOps</Name>
-  <Repository>ghcr.io/deltrivx/dockerops:0.4.3</Repository>
+  <Repository>ghcr.io/deltrivx/dockerops:0.4.4</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>

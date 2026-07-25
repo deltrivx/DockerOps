@@ -70,8 +70,17 @@ from unraid_mgr import (
 from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.3"
+VERSION = "0.4.4"
 CHANGELOG = [
+    {
+        "version": "0.4.4",
+        "date": "2026-07-26",
+        "items": [
+            "修复首屏卡顿：活动容器 stats 不再阻塞总览（延后加载 + 并行采样）",
+            "loadAll 竞态保护与顶部加载提示，避免显示异常后才刷新",
+            "activity 默认采样并行化，超时保护",
+        ],
+    },
     {
         "version": "0.4.3",
         "date": "2026-07-26",
