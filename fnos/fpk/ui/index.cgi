@@ -92,7 +92,7 @@ cat <<EOF
       <a class="btn" id="go" href="#" target="_top" rel="noopener">打开 DockerOps</a>
       <button type="button" class="btn secondary" id="retry">重新检测</button>
     </div>
-    <p style="margin-top:1.2rem;font-size:.85rem">首次使用请在 Web 界面设置管理员，或安装时预置 <code>DOCKEROPS_ADMIN_PASSWORD</code>。</p>
+    <p style="margin-top:1.2rem;font-size:.85rem">无默认账号。首次使用请在 Web 设置管理员（写入 SQLite）；可选同时设置用户名+密码预置。</p>
   </div>
   <script>
     (function () {

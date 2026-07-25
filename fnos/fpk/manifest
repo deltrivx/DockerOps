@@ -1,6 +1,6 @@
 appname               = dockerops
 display_name          = DockerOps 容器运维平台
-desc                  = `面向 NAS / 飞牛 的专业 Docker 运维平台，可替代 Portainer-CE 日常场景。<br><br><b>核心能力</b><br>• 安全更新：备份 → 拉取 → 按管理源重建，操作可追溯<br>• Doctor 诊断：健康分 + 可读故障说明，不只「挂了」<br>• 日常运维：容器启停/重启/日志、镜像/网络/卷、系统清理与事件<br>• Compose 引擎级双方接管：与飞牛 Docker UI / CLI 共享同一工程<br>• Unraid 模板升级：按 dockerMan 模板重建，保持 dockerman 非三方<br>• 首次使用设置向导：也可通过环境变量预置管理员账号<br><br><b>飞牛安装说明</b><br>• 本 FPK 通过 Docker 拉取 <code>ghcr.io/deltrivx/dockerops</code>（仅 GitHub Actions 远程构建）<br>• 桌面入口使用智能跳转（当前主机名 + 端口），避免 127.0.0.1 黑屏<br>• 默认映射 Web 端口 8080，数据卷持久化于应用数据目录<br>• 挂载 docker.sock 实现引擎级管理；完整接管请在应用设置中开启<br>• 首次打开 Web 界面设置管理员用户名/密码；或安装前配置环境变量跳过向导<br><br><b>安全提示</b><br>• 请修改默认/向导密码，建议仅内网访问<br>• rw 挂载 docker.sock ≈ 主机 root 权限，请谨慎开启完整接管<br><br>项目主页：<a target='_blank' href='https://github.com/deltrivx/DockerOps' style='color:#60a5fa'>GitHub deltrivx/DockerOps</a> · 镜像文档见 Release 附件`
+desc                  = `面向 NAS / 飞牛 的专业 Docker 运维平台，可替代 Portainer-CE 日常场景。<br><br><b>核心能力</b><br>• 安全更新：备份 → 拉取 → 按管理源重建，操作可追溯<br>• Doctor 诊断：健康分 + 可读故障说明，不只「挂了」<br>• 日常运维：容器启停/重启/日志、镜像/网络/卷、系统清理与事件<br>• Compose 引擎级双方接管：与飞牛 Docker UI / CLI 共享同一工程<br>• Unraid 模板升级：按 dockerMan 模板重建，保持 dockerman 非三方<br>• 无默认账号：首次 Web 向导创建超级管理员，写入内置 SQLite<br><br><b>飞牛安装说明</b><br>• 本 FPK 通过 Docker 拉取 <code>ghcr.io/deltrivx/dockerops</code>（仅 GitHub Actions 远程构建）<br>• 桌面入口使用智能跳转（当前主机名 + 端口），避免 127.0.0.1 黑屏<br>• 默认映射 Web 端口 8080，数据卷持久化于应用数据目录<br>• 挂载 docker.sock 实现引擎级管理；完整接管请在应用设置中开启<br>• 首次打开 Web 设置管理员；可选同时填写用户名+密码预置到 SQLite<br><br><b>安全提示</b><br>• 无内置默认密码，请妥善保管自行创建的账号；建议仅内网访问<br>• rw 挂载 docker.sock ≈ 主机 root 权限，请谨慎开启完整接管<br><br>项目主页：<a target='_blank' href='https://github.com/deltrivx/DockerOps' style='color:#60a5fa'>GitHub deltrivx/DockerOps</a> · 镜像文档见 Release 附件`
 source                = thirdparty
 maintainer            = deltrivx
 maintainer_url        = https://github.com/deltrivx/DockerOps
@@ -9,6 +9,6 @@ distributor_url       = https://github.com/deltrivx/DockerOps/releases
 desktop_uidir         = ui
 desktop_applaunchname = dockerops.Application
 platform              = all
-version               = 0.4.1
-changelog             = • 修复手机端无法点击（侧栏遮罩拦截触摸）<br>• 修复 PC 粒子特效不可见<br>• 无 Compose 项目时自动隐藏 Compose 菜单<br>• v0.4.0 运维总览卡片 / 个性化 / 批量操作
+version               = 0.4.2
+	changelog             = • 去除默认账号：无 admin/dockerops 内置凭据<br>• 账号/会话/审计/偏好写入内置 SQLite<br>• 可选 env 预置须同时显式设置用户名+密码<br>• 登录与安装向导不预填账号
 checksum              = PLACEHOLDER

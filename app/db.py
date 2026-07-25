@@ -24,10 +24,19 @@ def connect() -> sqlite3.Connection:
 
 
 def init_db() -> None:
+    """
+    Built-in SQLite at {data_dir}/dockerops.db.
+
+    Stores: users (bcrypt), sessions, ops_records, monitor_snapshots,
+    audit_log, app_meta (ui prefs / setup flags / important key-values).
+    No default accounts are seeded.
+    """
     get_settings().ensure_dirs()
     with _lock:
         conn = connect()
         try:
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("PRAGMA foreign_keys=ON;")
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS sessions (
@@ -71,7 +80,19 @@ def init_db() -> None:
                     value TEXT NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
+                CREATE INDEX IF NOT EXISTS idx_ops_created ON ops_records(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
                 """
+            )
+            # Ensure auth_store marker exists for ops visibility
+            now = time.time()
+            conn.execute(
+                """
+                INSERT INTO app_meta (key, value, updated_at) VALUES (?,?,?)
+                ON CONFLICT(key) DO NOTHING
+                """,
+                ("auth_store", "sqlite", now),
             )
             conn.commit()
         finally:

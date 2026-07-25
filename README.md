@@ -11,6 +11,7 @@ DockerOps 是一款专为 NAS、家庭服务器和轻量运维场景设计的 Do
 
 目标很明确：让 Docker 更新更安全、问题排查更简单、日常运维更省心。
 
+> **v0.4.2**：去除默认账号；管理员/会话/偏好写入内置 SQLite（`/data/dockerops.db`）；登录与安装向导不预填。  
 > **v0.4.1**：修复手机无法点击、PC 粒子不可见；无 Compose 项目时隐藏 Compose 菜单。  
 > **v0.4.0**：运维总览模块卡片；Unraid 风格响应式 UI；粒子 + 背景个性化；说明与更新日志；批量启停 / 重命名 / stats。  
 > 管理源：Compose / Unraid / 三方。**完整接管**默认关闭。镜像仅由 **GitHub Actions → GHCR** 构建，禁止本机构建再上传。
@@ -188,14 +189,17 @@ docker run -d \
   -p 8080:8080 \
   -v /var/run/docker.sock:/var/run/docker.sock:ro \
   -v dockerops-data:/data \
-  -e DOCKEROPS_ADMIN_PASSWORD=change-me \
   ghcr.io/deltrivx/dockerops:latest
 ```
 
 打开：`http://<host>:8080/`
 
-**首次使用**：打开 Web 界面按向导设置管理员用户名与密码。  
-若启动时设置了环境变量 `DOCKEROPS_ADMIN_PASSWORD`（≥6 位），将自动创建管理员并跳过向导（用户名默认 `admin` 或 `DOCKEROPS_ADMIN_USER`）。
+**账号与存储**
+
+- **无默认账号**（不再内置 `admin` / `dockerops`）。
+- 账号、会话、审计、UI 偏好写入内置 **SQLite**：`/data/dockerops.db`。
+- **首次使用**：打开 Web 向导创建超级管理员（bcrypt 哈希入库）。
+- **可选预置**：仅当进程环境**同时显式设置** `DOCKEROPS_ADMIN_USER` 与 `DOCKEROPS_ADMIN_PASSWORD`（≥6 位）时，启动时写入 SQLite 并跳过向导。Settings 空默认不会自动建号。
 
 ### Docker Compose
 
@@ -203,7 +207,7 @@ docker run -d \
 git clone https://github.com/deltrivx/DockerOps.git
 cd DockerOps
 cp .env.example .env
-# 编辑 .env 修改密码等
+# 无需填写默认密码；首次打开 Web 创建管理员
 
 docker compose up -d
 ```
@@ -225,9 +229,9 @@ Swagger：`http://<host>:8080/docs`
 |---|---|---|
 | `DOCKEROPS_HOST` | `0.0.0.0` | 监听地址 |
 | `DOCKEROPS_PORT` | `8080` | 监听端口 |
-| `DOCKEROPS_DATA_DIR` | `/data` | 数据目录（SQLite / 报告 / 备份元数据） |
-| `DOCKEROPS_ADMIN_USER` | `admin` | 预置管理员用户名（配合 PASSWORD 跳过向导） |
-| `DOCKEROPS_ADMIN_PASSWORD` | （空） | **仅当进程环境显式设置**时启动自动创建管理员并跳过向导；否则首次打开 Web 完成设置 |
+| `DOCKEROPS_DATA_DIR` | `/data` | 数据目录（内置 SQLite `dockerops.db` / 报告 / 备份） |
+| `DOCKEROPS_ADMIN_USER` | （空） | 可选。与 PASSWORD **同时**在进程环境显式设置时启动写入 SQLite；无默认值 |
+| `DOCKEROPS_ADMIN_PASSWORD` | （空） | 可选。与 USER 同时设置且 ≥6 位时预置管理员；否则首次 Web 向导 |
 | `DOCKEROPS_API_TOKEN` | （空） | 可选固定 API Token；为空则登录后颁发会话 Token |
 | `DOCKEROPS_DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker 引擎地址 |
 | `DOCKEROPS_PLATFORM` | `auto` | `auto` / `unraid` / `fnos` / `generic` |
@@ -341,7 +345,8 @@ ghcr.io/deltrivx/dockerops
 ```text
 DockerOps/
 ├── app/
-│   ├── main.py              # FastAPI 入口 v0.4.0
+│   ├── main.py              # FastAPI 入口 v0.4.2
+│   ├── auth.py · db.py      # SQLite 账号/会话（无默认账号）
 │   ├── host_platform.py     # Unraid / 飞牛 / generic 探测
 │   ├── docker_resources.py  # 日常资源运维
 │   ├── logs_stream.py · events_stream.py

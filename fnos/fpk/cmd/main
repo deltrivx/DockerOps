@@ -28,7 +28,8 @@ UI_PORT_FILE="${UI_DIR}/port"
 # Wizard fields (may be exported by AppCenter as env)
 PORT="${wizard_app_port:-${DOCKEROPS_PORT:-8080}}"
 TAKEOVER="${wizard_takeover:-${DOCKEROPS_TAKEOVER_ENABLED:-false}}"
-ADMIN_USER="${wizard_admin_user:-${DOCKEROPS_ADMIN_USER:-admin}}"
+# 无默认账号；仅当向导/环境显式提供时才写入 env 供 bootstrap
+ADMIN_USER="${wizard_admin_user:-${DOCKEROPS_ADMIN_USER:-}}"
 ADMIN_PASS="${wizard_admin_password:-${DOCKEROPS_ADMIN_PASSWORD:-}}"
 COMPOSE_IN="${wizard_compose_dirs:-/compose}"
 HOST_COMPOSE="${wizard_host_compose:-/vol1/docker/compose}"
@@ -65,11 +66,11 @@ DOCKEROPS_TAKEOVER_ENABLED=${TAKEOVER}
 DOCKEROPS_COMPOSE_ENABLED=true
 DOCKEROPS_COMPOSE_PROJECT_DIRS=${COMPOSE_IN}
 DOCKEROPS_UNRAID_ENABLED=false
-DOCKEROPS_ADMIN_USER=${ADMIN_USER}
 TZ=Asia/Shanghai
 EOF
-  # Only inject password into container env when user set one (enables auto-bootstrap)
-  if [ -n "${ADMIN_PASS}" ] && [ "${#ADMIN_PASS}" -ge 6 ]; then
+  # Only inject both user+password when explicitly set (enables one-shot SQLite bootstrap)
+  if [ -n "${ADMIN_USER}" ] && [ -n "${ADMIN_PASS}" ] && [ "${#ADMIN_PASS}" -ge 6 ]; then
+    echo "DOCKEROPS_ADMIN_USER=${ADMIN_USER}" >> "${ENV_FILE}"
     echo "DOCKEROPS_ADMIN_PASSWORD=${ADMIN_PASS}" >> "${ENV_FILE}"
   fi
   chmod 600 "${ENV_FILE}" 2>/dev/null || true

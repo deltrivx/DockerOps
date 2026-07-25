@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.4.1 — 面向 NAS 的 Docker 运维平台。运维总览卡片、Unraid 风格响应式 UI、粒子与背景个性化；修复手机点击与 PC 粒子；无 Compose 项目时隐藏 Compose 菜单；批量启停/重命名/stats。镜像仅由 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.4.2 — 面向 NAS 的 Docker 运维平台。无默认账号；管理员写入内置 SQLite（/data/dockerops.db）；首次 Web 向导创建或可选 env 同时预置 USER+PASSWORD。运维总览卡片、Unraid 风格响应式 UI。镜像仅由 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>
@@ -25,8 +25,8 @@
   <Config Name="Appdata" Target="/data" Default="/mnt/user/appdata/dockerops" Mode="rw" Description="数据目录（SQLite / 备份 / 报告）" Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/dockerops</Config>
   <Config Name="Docker Socket" Target="/var/run/docker.sock" Default="/var/run/docker.sock" Mode="rw" Description="Docker 引擎套接字。只读运维可改为 ro；完整接管需 rw" Type="Path" Display="always" Required="true" Mask="false">/var/run/docker.sock</Config>
   <Config Name="Unraid Templates" Target="/unraid/templates-user" Default="/boot/config/plugins/dockerMan/templates-user" Mode="rw" Description="dockerMan 用户模板目录，用于 Unraid 双方接管（非三方）" Type="Path" Display="always" Required="false" Mask="false">/boot/config/plugins/dockerMan/templates-user</Config>
-  <Config Name="Admin User" Target="DOCKEROPS_ADMIN_USER" Default="admin" Mode="" Description="管理员用户名" Type="Variable" Display="always" Required="true" Mask="false">admin</Config>
-  <Config Name="Admin Password" Target="DOCKEROPS_ADMIN_PASSWORD" Default="" Mode="" Description="预置管理员密码（≥6 位则跳过首次向导；留空则首次 Web 设置）" Type="Variable" Display="always" Required="true" Mask="true"></Config>
+  <Config Name="Admin User" Target="DOCKEROPS_ADMIN_USER" Default="" Mode="" Description="可选。与 Admin Password 同时填写时启动写入 SQLite 预置管理员；留空则首次 Web 向导创建（无默认账号）" Type="Variable" Display="always" Required="false" Mask="false"></Config>
+  <Config Name="Admin Password" Target="DOCKEROPS_ADMIN_PASSWORD" Default="" Mode="" Description="可选。与 Admin User 同时填写且≥6 位时预置管理员到 SQLite；留空=首次打开 Web 设置。无内置默认密码" Type="Variable" Display="always" Required="false" Mask="true"></Config>
   <Config Name="Takeover Enabled" Target="DOCKEROPS_TAKEOVER_ENABLED" Default="false" Mode="" Description="true=完整接管（compose up/down、模板重建、Adopt、删除/prune）" Type="Variable" Display="always" Required="false" Mask="false">false</Config>
   <Config Name="Platform" Target="DOCKEROPS_PLATFORM" Default="unraid" Mode="" Description="auto|unraid|fnos|generic" Type="Variable" Display="advanced" Required="false" Mask="false">unraid</Config>
   <Config Name="Resource APIs" Target="DOCKEROPS_RESOURCE_APIS" Default="true" Mode="" Description="启停/日志/镜像/网络/卷等日常运维 API" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>

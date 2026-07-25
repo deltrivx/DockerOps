@@ -22,8 +22,10 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8080
     data_dir: str = "/data"
-    admin_user: str = "admin"
-    admin_password: str = "dockerops"
+    # Optional one-shot bootstrap ONLY when both are explicitly set in process env.
+    # Empty defaults: no built-in account; first admin is created via Web 向导 → SQLite.
+    admin_user: str = ""
+    admin_password: str = ""
     api_token: str = ""
     docker_host: str = "unix:///var/run/docker.sock"
     secret_key: str = ""
@@ -70,7 +72,8 @@ class Settings(BaseSettings):
     def resolved_secret(self) -> str:
         if self.secret_key:
             return self.secret_key
-        return f"dockerops-{self.admin_user}-{self.admin_password}-secret"
+        # Do not derive from empty/default credentials; stable install-local fallback.
+        return f"dockerops-data-{self.data_dir}-session-secret"
 
     def compose_dirs(self) -> list[Path]:
         if not self.compose_project_dirs.strip():

@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.1",
+  version: "0.4.2",
   tab: "overview",
   needsSetup: false,
   containers: [],

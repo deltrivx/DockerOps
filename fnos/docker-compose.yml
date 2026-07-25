@@ -20,9 +20,10 @@ services:
       DOCKEROPS_HOST: 0.0.0.0
       DOCKEROPS_PORT: 8080
       DOCKEROPS_DATA_DIR: /data
-      DOCKEROPS_ADMIN_USER: admin
-      # 设置后启动自动创建管理员并跳过 Web 向导；留空则首次打开网页设置
-      # DOCKEROPS_ADMIN_PASSWORD: change-me
+      # 无默认账号。首次打开 Web 向导创建管理员 → 写入 /data/dockerops.db
+      # 可选预置（须同时显式设置 USER+PASSWORD，≥6 位）：
+      # DOCKEROPS_ADMIN_USER: yourname
+      # DOCKEROPS_ADMIN_PASSWORD: your-strong-password
       DOCKEROPS_DOCKER_HOST: unix:///var/run/docker.sock
       DOCKEROPS_PLATFORM: fnos
       DOCKEROPS_RESOURCE_APIS: "true"

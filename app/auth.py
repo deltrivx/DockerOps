@@ -59,37 +59,48 @@ def validate_password(password: str) -> str:
 
 
 def needs_setup() -> bool:
+    """True when SQLite users table is empty — no default account exists."""
     return user_count() == 0
 
 
 def bootstrap_from_env() -> dict[str, Any]:
     """
-    If no users exist and DOCKEROPS_ADMIN_PASSWORD is explicitly set in the
-    process environment, create the first admin from env and skip the wizard.
-    Defaults in Settings alone do NOT auto-bootstrap (force first-run setup).
+    Optional install-time bootstrap only.
+
+    Creates the first admin into SQLite when BOTH are explicitly present in the
+    process environment and password is ≥6 chars:
+      DOCKEROPS_ADMIN_USER
+      DOCKEROPS_ADMIN_PASSWORD
+
+    Settings defaults are empty and never auto-create accounts.
+    After bootstrap (or wizard), all auth is SQLite-only.
     """
     if user_count() > 0:
-        return {"bootstrapped": False, "reason": "users_exist"}
+        return {"bootstrapped": False, "reason": "users_exist", "store": "sqlite"}
 
     if "DOCKEROPS_ADMIN_PASSWORD" not in os.environ:
-        return {"bootstrapped": False, "reason": "no_env_password"}
+        return {"bootstrapped": False, "reason": "no_env_password", "store": "sqlite"}
+    if "DOCKEROPS_ADMIN_USER" not in os.environ:
+        return {"bootstrapped": False, "reason": "no_env_user", "store": "sqlite"}
 
-    settings = get_settings()
-    username = (settings.admin_user or "admin").strip() or "admin"
-    password = settings.admin_password or ""
+    username_raw = (os.environ.get("DOCKEROPS_ADMIN_USER") or "").strip()
+    password = os.environ.get("DOCKEROPS_ADMIN_PASSWORD") or ""
+    if not username_raw:
+        return {"bootstrapped": False, "reason": "env_user_empty", "store": "sqlite"}
     if len(password) < 6:
-        return {"bootstrapped": False, "reason": "env_password_too_short"}
+        return {"bootstrapped": False, "reason": "env_password_too_short", "store": "sqlite"}
 
     try:
-        validate_username(username)
+        username = validate_username(username_raw)
     except HTTPException:
-        username = "admin"
+        return {"bootstrapped": False, "reason": "env_user_invalid", "store": "sqlite"}
 
     create_user(username, hash_password(password), role="admin")
     set_meta("bootstrap_source", "env")
     set_meta("setup_completed", "1")
-    audit("bootstrap_admin", actor="system", detail={"username": username, "source": "env"})
-    return {"bootstrapped": True, "username": username, "source": "env"}
+    set_meta("auth_store", "sqlite")
+    audit("bootstrap_admin", actor="system", detail={"username": username, "source": "env", "store": "sqlite"})
+    return {"bootstrapped": True, "username": username, "source": "env", "store": "sqlite"}
 
 
 def auth_status() -> dict[str, Any]:
@@ -99,12 +110,18 @@ def auth_status() -> dict[str, Any]:
         "ok": True,
         "needs_setup": setup,
         "user_count": count,
+        "auth_store": "sqlite",
+        "db": "dockerops.db",
         "bootstrap_source": get_meta("bootstrap_source"),
-        "env_password_configured": "DOCKEROPS_ADMIN_PASSWORD" in os.environ,
+        "env_bootstrap_ready": (
+            "DOCKEROPS_ADMIN_USER" in os.environ
+            and "DOCKEROPS_ADMIN_PASSWORD" in os.environ
+            and len(os.environ.get("DOCKEROPS_ADMIN_PASSWORD") or "") >= 6
+        ),
         "message": (
-            "请完成首次管理员设置"
+            "尚未创建账号：请在首次设置向导中创建超级管理员（写入内置 SQLite）"
             if setup
-            else "已配置管理员，可登录"
+            else "账号已保存在内置 SQLite，可登录"
         ),
     }
 
@@ -119,14 +136,16 @@ def complete_setup(username: str, password: str) -> dict[str, Any]:
     create_user(username, hash_password(password), role="admin")
     set_meta("bootstrap_source", "wizard")
     set_meta("setup_completed", "1")
+    set_meta("auth_store", "sqlite")
     token = create_session(username, get_settings().session_ttl_hours)
-    audit("setup_complete", actor=username, detail={"source": "wizard"})
+    audit("setup_complete", actor=username, detail={"source": "wizard", "store": "sqlite"})
     return {
         "ok": True,
-        "message": "管理员已创建，已自动登录",
+        "message": "管理员已写入 SQLite，已自动登录",
         "access_token": token,
         "token_type": "bearer",
         "username": username,
+        "auth_store": "sqlite",
         "expires_in_hours": get_settings().session_ttl_hours,
     }
 
@@ -135,14 +154,11 @@ def login(username: str, password: str) -> dict:
     if needs_setup():
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="尚未初始化，请先完成首次管理员设置",
+            detail="尚未初始化，请先完成首次管理员设置（账号写入内置 SQLite）",
         )
 
     user = get_user_by_username(username.strip())
     if not user or not verify_password(password, user["password_hash"]):
-        # Legacy fallback: allow one-time env login only if hash verify fails and
-        # username matches env admin AND password matches env AND meta says env bootstrap
-        # (no plaintext fallback for security)
         audit("login_failed", actor=username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="用户名或密码错误")
 
@@ -152,6 +168,7 @@ def login(username: str, password: str) -> dict:
         "access_token": token,
         "token_type": "bearer",
         "username": user["username"],
+        "auth_store": "sqlite",
         "expires_in_hours": get_settings().session_ttl_hours,
     }
 
@@ -163,7 +180,7 @@ def change_password(username: str, old_password: str, new_password: str) -> dict
     new_password = validate_password(new_password)
     update_user_password(username, hash_password(new_password))
     audit("password_changed", actor=username)
-    return {"ok": True, "message": "密码已更新"}
+    return {"ok": True, "message": "密码已更新（SQLite）"}
 
 
 def logout(token: str) -> None:

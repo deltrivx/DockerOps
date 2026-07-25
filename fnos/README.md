@@ -48,11 +48,12 @@ docker run -d --name dockerops --restart unless-stopped \
   -e DOCKEROPS_TAKEOVER_ENABLED=true \
   -e DOCKEROPS_COMPOSE_PROJECT_DIRS=/compose \
   -e DOCKEROPS_UNRAID_ENABLED=false \
-  -e DOCKEROPS_ADMIN_PASSWORD=change-me \
   ghcr.io/deltrivx/dockerops:latest
 ```
 
 打开 `http://<飞牛IP>:8080/`，查看顶栏 **平台: 飞牛**。
+
+无默认账号；首次 Web 向导创建管理员写入 `/data/dockerops.db`。可选同时设置 `DOCKEROPS_ADMIN_USER` + `DOCKEROPS_ADMIN_PASSWORD`（≥6 位）预置。
 
 ## 路径约定
 

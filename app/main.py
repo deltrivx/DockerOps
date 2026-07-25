@@ -70,8 +70,18 @@ from unraid_mgr import (
 from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.1"
+VERSION = "0.4.2"
 CHANGELOG = [
+    {
+        "version": "0.4.2",
+        "date": "2026-07-25",
+        "items": [
+            "去除默认账号：无 admin/dockerops 内置凭据，登录/安装向导不预填",
+            "账号与会话/审计/偏好仅存内置 SQLite（/data/dockerops.db）",
+            "可选 env 预置须同时显式设置 DOCKEROPS_ADMIN_USER + PASSWORD；Settings 空默认不 bootstrap",
+            "Compose / Unraid 模板 / 飞牛配方不再注入默认管理员",
+        ],
+    },
     {
         "version": "0.4.1",
         "date": "2026-07-25",
