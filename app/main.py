@@ -70,8 +70,18 @@ from unraid_mgr import (
 from update_detect import detect_updates, one_click_update
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.2"
+VERSION = "0.4.3"
 CHANGELOG = [
+    {
+        "version": "0.4.3",
+        "date": "2026-07-26",
+        "items": [
+            "打开网页：无账号强制首次初始化；有账号强制登录门（不可 Esc 绕过）",
+            "登录页「忘记密码」展示终端改密命令（docker exec … python -m tools.reset_password）",
+            "新增 /api/auth/me 会话校验；改密后旧会话失效",
+            "内置 CLI：tools.reset_password 支持列表/重置/清空用户",
+        ],
+    },
     {
         "version": "0.4.2",
         "date": "2026-07-25",
@@ -326,6 +336,17 @@ def api_managers_summary(actor: OptionalUser = None) -> dict[str, Any]:
 @app.get("/api/auth/status")
 def api_auth_status() -> dict[str, Any]:
     return auth_status()
+
+
+@app.get("/api/auth/me")
+def api_auth_me(actor: AuthUser) -> dict[str, Any]:
+    """Validate session token; used by Web 登录门."""
+    return {
+        "ok": True,
+        "username": actor,
+        "auth_store": "sqlite",
+        "authenticated": True,
+    }
 
 
 @app.post("/api/auth/setup")

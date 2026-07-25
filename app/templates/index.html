@@ -57,7 +57,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.4.2 · —
+        v0.4.3 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -523,38 +523,48 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.4.2</span> ·
+        DockerOps <span id="foot-version">v0.4.3</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
     </div>
   </div>
 
-  <dialog id="setup-dialog">
+  <dialog id="setup-dialog" class="auth-dialog" data-auth-gate="setup">
     <form method="dialog" id="setup-form">
-      <h3>首次使用 · 创建超级管理员</h3>
-      <p class="muted small">无默认账号。管理员将写入内置 SQLite（<code>/data/dockerops.db</code>），请妥善保管。</p>
+      <h3>首次初始化 · 创建超级管理员</h3>
+      <p class="muted small">未检测到账号，必须先完成初始化。账号写入内置 SQLite（<code>/data/dockerops.db</code>），无默认账号。</p>
       <label>用户名 <input name="username" autocomplete="username" minlength="3" maxlength="32" required placeholder="自定义用户名" /></label>
       <label>密码 <input name="password" type="password" autocomplete="new-password" minlength="6" required placeholder="至少 6 位" /></label>
       <label>确认密码 <input name="password_confirm" type="password" autocomplete="new-password" minlength="6" required placeholder="再次输入密码" /></label>
       <p id="setup-error" class="error" hidden></p>
       <div class="row-between">
-        <span class="muted small">账号仅存本机 SQLite</span>
-        <button type="submit" class="btn primary">创建并登录</button>
+        <span class="muted small">完成后自动登录</span>
+        <button type="submit" class="btn primary">创建并进入控制台</button>
       </div>
     </form>
   </dialog>
 
-  <dialog id="login-dialog">
+  <dialog id="login-dialog" class="auth-dialog" data-auth-gate="login">
     <form method="dialog" id="login-form">
       <h3>登录 DockerOps</h3>
-      <p class="muted small">使用已写入 SQLite 的账号登录</p>
+      <p class="muted small">请使用已保存在 SQLite 的账号登录后使用运维控制台。</p>
+      <p id="login-users-hint" class="muted small" hidden></p>
       <label>用户名 <input name="username" autocomplete="username" required placeholder="用户名" /></label>
       <label>密码 <input name="password" type="password" autocomplete="current-password" required placeholder="密码" /></label>
       <p id="login-error" class="error" hidden></p>
+      <details id="forgot-password" class="forgot-box">
+        <summary>忘记密码？</summary>
+        <div class="forgot-body">
+          <p class="muted small" id="forgot-summary">Web 不提供自助重置。请在 NAS 主机终端执行：</p>
+          <pre class="mono forgot-cmd" id="forgot-cmd">docker exec -it DockerOps python -m tools.reset_password --username YourUser --password "新密码至少6位"</pre>
+          <p class="muted small" id="forgot-notes"></p>
+          <button type="button" class="btn small" id="forgot-copy">复制命令</button>
+        </div>
+      </details>
       <div class="row-between">
-        <button type="button" class="btn" id="login-cancel">取消</button>
-        <button type="submit" class="btn primary">确定</button>
+        <button type="button" class="btn" id="login-cancel" hidden>取消</button>
+        <button type="submit" class="btn primary">登录</button>
       </div>
     </form>
   </dialog>

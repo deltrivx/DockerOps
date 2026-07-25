@@ -3,9 +3,14 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.2",
+  version: "0.4.3",
   tab: "overview",
   needsSetup: false,
+  usernames: [],
+  passwordReset: null,
+  authGateOpen: false,
+  /** When true, dialog close handlers must not re-open the gate. */
+  authUnlocking: false,
   containers: [],
   compose: [],
   unraid: [],
@@ -148,13 +153,13 @@ function setVersionUI() {
 function setAuthUI() {
   const el = $("#auth-state");
   if (state.needsSetup) {
-    el.textContent = "需要首次设置";
-    $("#btn-login").textContent = "设置管理员";
+    el.textContent = "需要首次初始化";
+    $("#btn-login").textContent = "初始化";
   } else if (state.token) {
     el.textContent = `已登录：${state.username || "user"}`;
     $("#btn-login").textContent = "退出";
   } else {
-    el.textContent = "未登录（只读）";
+    el.textContent = "未登录";
     $("#btn-login").textContent = "登录";
   }
   const tb = $("#takeover-badge");
@@ -169,12 +174,113 @@ function setAuthUI() {
   pb.textContent = platformLabel(state.platform);
   pb.className = `badge platform-${state.platform || "generic"}`;
   setVersionUI();
+  const cancel = $("#login-cancel");
+  if (cancel) {
+    // Allow cancel only when already logged-in session is open for re-auth; gate is forced otherwise
+    cancel.hidden = !state.token;
+  }
+}
+
+function lockAuthGate(kind) {
+  state.authGateOpen = true;
+  document.body.classList.add("auth-locked");
+  const setup = $("#setup-dialog");
+  const login = $("#login-dialog");
+  // Suppress close-handler re-open while switching dialogs
+  state.authUnlocking = true;
+  try {
+    if (kind === "setup") {
+      if (login?.open) login.close();
+      if (setup && !setup.open) setup.showModal();
+      const err = $("#setup-error");
+      if (err) err.hidden = true;
+    } else {
+      if (setup?.open) setup.close();
+      if (login && !login.open) login.showModal();
+      const err = $("#login-error");
+      if (err) err.hidden = true;
+      fillForgotPasswordUI();
+    }
+  } finally {
+    setTimeout(() => {
+      state.authUnlocking = false;
+    }, 30);
+  }
+}
+
+function unlockAuthGate() {
+  state.authUnlocking = true;
+  state.authGateOpen = false;
+  document.body.classList.remove("auth-locked");
+  const setup = $("#setup-dialog");
+  const login = $("#login-dialog");
+  try {
+    if (setup?.open) setup.close();
+    if (login?.open) login.close();
+  } finally {
+    // allow next forced gate if needed
+    setTimeout(() => {
+      state.authUnlocking = false;
+    }, 50);
+  }
+}
+
+function fillForgotPasswordUI() {
+  const pr = state.passwordReset || {};
+  const names = state.usernames || pr.usernames_hint || [];
+  const hint = $("#login-users-hint");
+  if (hint) {
+    if (names.length) {
+      hint.hidden = false;
+      hint.textContent = `已有账号：${names.join("、")}`;
+      const input = document.querySelector('#login-form input[name="username"]');
+      if (input && !input.value) input.value = names[0];
+    } else {
+      hint.hidden = true;
+    }
+  }
+  const summary = $("#forgot-summary");
+  if (summary) {
+    summary.textContent = pr.summary || "Web 不提供自助重置。请在 NAS 主机终端执行：";
+  }
+  const cmds = pr.commands || [];
+  const primary = cmds[0]?.cmd
+    || 'docker exec -it DockerOps python -m tools.reset_password --username YourUser --password "新密码至少6位"';
+  const extra = cmds
+    .slice(1)
+    .map((c) => `# ${c.label}\n${c.cmd}`)
+    .join("\n\n");
+  const cmdEl = $("#forgot-cmd");
+  if (cmdEl) {
+    cmdEl.textContent = extra ? `${primary}\n\n${extra}` : primary;
+  }
+  const notes = $("#forgot-notes");
+  if (notes) {
+    const lines = pr.notes || [];
+    notes.textContent = lines.length ? lines.map((n) => `• ${n}`).join("\n") : "";
+  }
+}
+
+function enforceAuthGate() {
+  if (state.needsSetup) {
+    lockAuthGate("setup");
+    return "setup";
+  }
+  if (!state.token) {
+    lockAuthGate("login");
+    return "login";
+  }
+  unlockAuthGate();
+  return "ok";
 }
 
 function requireLogin() {
+  if (state.needsSetup) {
+    lockAuthGate("setup");
+    return false;
+  }
   if (!state.token) {
-    alert("写操作需要先登录");
-    $("#login-dialog").showModal();
+    lockAuthGate("login");
     return false;
   }
   return true;
@@ -260,19 +366,45 @@ async function checkSetup() {
   try {
     const st = await api("/api/auth/status");
     state.needsSetup = !!st.needs_setup;
-    setAuthUI();
+    state.usernames = Array.isArray(st.usernames) ? st.usernames : [];
+    state.passwordReset = st.password_reset || null;
     if (state.needsSetup) {
       state.token = "";
       state.username = "";
       localStorage.removeItem("dockerops_token");
       localStorage.removeItem("dockerops_user");
-      const dlg = $("#setup-dialog");
-      if (dlg && !dlg.open) dlg.showModal();
     }
+    setAuthUI();
+    enforceAuthGate();
     return st;
   } catch (e) {
+    // If status fails, still force login rather than open console anonymously
     state.needsSetup = false;
+    setAuthUI();
+    if (!state.token) lockAuthGate("login");
     return null;
+  }
+}
+
+async function validateSession() {
+  if (!state.token || state.needsSetup) return false;
+  try {
+    const me = await api("/api/auth/me");
+    if (me && me.username) state.username = me.username;
+    return true;
+  } catch (e) {
+    const msg = String(e.message || "");
+    if (/401|未授权|登录|Token|token|Unauthorized|需要登录/i.test(msg)) {
+      state.token = "";
+      state.username = "";
+      localStorage.removeItem("dockerops_token");
+      localStorage.removeItem("dockerops_user");
+      setAuthUI();
+      lockAuthGate("login");
+      return false;
+    }
+    // Network blip: keep token
+    return true;
   }
 }
 
@@ -572,6 +704,11 @@ async function loadAll() {
   setAuthUI();
   try {
     await checkSetup();
+    if (state.needsSetup) return; // forced setup — do not load console data yet
+    if (!state.token) return; // forced login — wait for credentials
+    const okSession = await validateSession();
+    if (!okSession) return;
+
     const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, activity, sysPack] =
       await Promise.all([
         api("/api/doctor"),
@@ -1429,8 +1566,7 @@ $("#btn-sys-prune").addEventListener("click", async () => {
 
 $("#btn-login").addEventListener("click", async () => {
   if (state.needsSetup) {
-    $("#setup-error").hidden = true;
-    $("#setup-dialog").showModal();
+    lockAuthGate("setup");
     return;
   }
   if (state.token) {
@@ -1442,13 +1578,65 @@ $("#btn-login").addEventListener("click", async () => {
     localStorage.removeItem("dockerops_token");
     localStorage.removeItem("dockerops_user");
     setAuthUI();
+    lockAuthGate("login");
     return;
   }
-  $("#login-error").hidden = true;
-  $("#login-dialog").showModal();
+  lockAuthGate("login");
 });
 
-$("#login-cancel").addEventListener("click", () => $("#login-dialog").close());
+$("#login-cancel")?.addEventListener("click", () => {
+  // Only meaningful if already authenticated (hidden otherwise)
+  if (state.token) {
+    $("#login-dialog")?.close();
+    document.body.classList.remove("auth-locked");
+    state.authGateOpen = false;
+  }
+});
+
+$("#forgot-copy")?.addEventListener("click", async () => {
+  const text = $("#forgot-cmd")?.textContent || "";
+  try {
+    await navigator.clipboard.writeText(text);
+    const btn = $("#forgot-copy");
+    if (btn) {
+      const old = btn.textContent;
+      btn.textContent = "已复制";
+      setTimeout(() => {
+        btn.textContent = old;
+      }, 1200);
+    }
+  } catch (_) {
+    alert("复制失败，请手动选中命令");
+  }
+});
+
+// Prevent Esc / cancel from bypassing forced auth gate
+["setup-dialog", "login-dialog"].forEach((id) => {
+  const dlg = document.getElementById(id);
+  if (!dlg) return;
+  dlg.addEventListener("cancel", (e) => {
+    if (state.authUnlocking) return;
+    if (state.needsSetup || !state.token) {
+      e.preventDefault();
+    }
+  });
+  dlg.addEventListener("close", () => {
+    if (state.authUnlocking) return;
+    // If closed while still required, re-open on next tick
+    if (state.needsSetup) {
+      setTimeout(() => {
+        if (!state.authUnlocking && state.needsSetup) lockAuthGate("setup");
+      }, 0);
+    } else if (!state.token) {
+      setTimeout(() => {
+        if (!state.authUnlocking && !state.token) lockAuthGate("login");
+      }, 0);
+    } else {
+      document.body.classList.remove("auth-locked");
+      state.authGateOpen = false;
+    }
+  });
+});
 
 $("#setup-form").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -1473,9 +1661,10 @@ $("#setup-form").addEventListener("submit", async (e) => {
     state.token = data.access_token;
     state.username = data.username;
     state.needsSetup = false;
+    state.usernames = [data.username];
     localStorage.setItem("dockerops_token", state.token);
     localStorage.setItem("dockerops_user", state.username);
-    $("#setup-dialog").close();
+    unlockAuthGate();
     setAuthUI();
     loadAll();
   } catch (err) {
@@ -1501,17 +1690,19 @@ $("#login-form").addEventListener("submit", async (e) => {
     state.needsSetup = false;
     localStorage.setItem("dockerops_token", state.token);
     localStorage.setItem("dockerops_user", state.username);
-    $("#login-dialog").close();
+    unlockAuthGate();
     setAuthUI();
     loadAll();
   } catch (err) {
     const el = $("#login-error");
     el.hidden = false;
     el.textContent = err.message || "登录失败";
+    // Keep forgot-password visible on failure
+    fillForgotPasswordUI();
   }
 });
 
-// initial
+// initial — auth gate first, then console data
 setSidebarOpen(false); // ensure mobile backdrop never blocks first paint
 applyPrefsLocal(state.prefs);
 if (window.DockerOpsParticles) {
@@ -1519,5 +1710,10 @@ if (window.DockerOpsParticles) {
 }
 updateComposeNavVisibility();
 switchTab("overview");
+// Open gate immediately if we already know session is empty (before network)
+if (!state.token) {
+  // status will refine setup vs login
+  lockAuthGate("login");
+}
 loadAll();
 setInterval(loadAll, 60000);

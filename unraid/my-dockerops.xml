@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DockerOps</Name>
-  <Repository>ghcr.io/deltrivx/dockerops:0.4.2</Repository>
+  <Repository>ghcr.io/deltrivx/dockerops:0.4.3</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.4.2 — 面向 Unraid 的 Docker 运维平台。无默认账号；管理员写入内置 SQLite（/data/dockerops.db）；首次 Web 向导或可选 env 同时预置 USER+PASSWORD。按本模板创建以保持 dockerman（非三方）。镜像仅由 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.4.3 — 面向 Unraid 的 Docker 运维平台。打开网页：无账号强制初始化、有账号强制登录；忘记密码见终端 docker exec … python -m tools.reset_password。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>

@@ -17,6 +17,7 @@ from db import (
     get_meta,
     get_session,
     get_user_by_username,
+    list_usernames,
     set_meta,
     update_user_password,
     user_count,
@@ -103,13 +104,48 @@ def bootstrap_from_env() -> dict[str, Any]:
     return {"bootstrapped": True, "username": username, "source": "env", "store": "sqlite"}
 
 
+def password_reset_hint(usernames: list[str] | None = None) -> dict[str, Any]:
+    """Public, non-secret guidance for host-side password reset (no Web reset)."""
+    names = usernames if usernames is not None else list_usernames()
+    sample = names[0] if names else "YourUser"
+    cmd_unraid = (
+        f'docker exec -it DockerOps python -m tools.reset_password '
+        f'--username {sample} --password "新密码至少6位"'
+    )
+    cmd_generic = (
+        f'docker exec -it dockerops python -m tools.reset_password '
+        f'--username {sample} --password "新密码至少6位"'
+    )
+    cmd_prompt = (
+        f"docker exec -it DockerOps python -m tools.reset_password --username {sample}"
+    )
+    return {
+        "title": "忘记密码？",
+        "summary": "Web 端不提供自助重置。请在 NAS 主机终端用容器内工具改密（写入 SQLite）。",
+        "usernames_hint": names,
+        "container_names": ["DockerOps", "dockerops"],
+        "commands": [
+            {"label": "Unraid（容器名 DockerOps）", "cmd": cmd_unraid},
+            {"label": "通用（容器名 dockerops）", "cmd": cmd_generic},
+            {"label": "交互输入密码（不在命令行暴露）", "cmd": cmd_prompt},
+        ],
+        "notes": [
+            "账号仅存 /data/dockerops.db（内置 SQLite），改密后立即生效，旧会话会失效。",
+            "若容器名不同，将 DockerOps 换成实际名称：docker ps | grep -i dockerops",
+            "无账号时打开网页会强制进入「首次初始化」，不会出现登录页。",
+        ],
+    }
+
+
 def auth_status() -> dict[str, Any]:
     count = user_count()
     setup = count == 0
+    names = [] if setup else list_usernames()
     return {
         "ok": True,
         "needs_setup": setup,
         "user_count": count,
+        "usernames": names,
         "auth_store": "sqlite",
         "db": "dockerops.db",
         "bootstrap_source": get_meta("bootstrap_source"),
@@ -118,10 +154,11 @@ def auth_status() -> dict[str, Any]:
             and "DOCKEROPS_ADMIN_PASSWORD" in os.environ
             and len(os.environ.get("DOCKEROPS_ADMIN_PASSWORD") or "") >= 6
         ),
+        "password_reset": password_reset_hint(names),
         "message": (
-            "尚未创建账号：请在首次设置向导中创建超级管理员（写入内置 SQLite）"
+            "尚未创建账号：请完成首次初始化（强制设置超级管理员，写入 SQLite）"
             if setup
-            else "账号已保存在内置 SQLite，可登录"
+            else "已有账号，请登录后使用运维控制台"
         ),
     }
 
