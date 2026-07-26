@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.8",
+  version: "0.4.9",
   tab: "overview",
   needsSetup: false,
   usernames: [],
@@ -1246,45 +1246,38 @@ function renderImages() {
     const ref = imageRef(img);
     const selKey = img.full_id || img.id || ref;
     const checked = state.selectedImages.has(selKey) ? "checked" : "";
-    let nameHtml;
-    if (dangling) {
-      nameHtml = `<span class="badge-dangling" title="无标签 dangling 镜像">&lt;none&gt;:&lt;none&gt;</span>`;
-    } else {
-      const main = tags[0] || img.label || "";
-      const parts = splitImageRef(main);
-      const more =
-        tags.length > 1
-          ? `<div class="tag-more" title="${escapeHtml(tags.slice(1).join("\n"))}">另有 ${tags.length - 1} 个标签</div>`
-          : "";
-      nameHtml = `<div class="img-name-cell" title="${escapeHtml(tags.join("\n"))}">
-        <div class="img-repo cell-clip">${escapeHtml(parts.repo || main)}</div>
-        <div class="img-tag cell-clip">${parts.tag ? ":" + escapeHtml(parts.tag) : ""}</div>
-        ${more}
-      </div>`;
-    }
     const used = Number(img.used_by) || 0;
     const usedHtml = used > 0 ? `<strong>${used}</strong>` : `<span class="badge-unused">—</span>`;
     const shortId = String(img.id || "").replace(/^sha256:/, "").slice(0, 12);
+    // Prefer server-formatted created_fmt (handles Docker nanosecond ISO)
+    const createdLabel = img.created_fmt || fmtImageCreated(img.created);
+    // Single-line name: repo:tag (no multi-line stack that collapses under narrow cols)
+    let nameOneLine;
+    if (dangling) {
+      nameOneLine = `<span class="badge-dangling" title="dangling">&lt;none&gt;:&lt;none&gt;</span>`;
+    } else {
+      const main = (tags[0] || img.label || "");
+      const extra = tags.length > 1 ? ` (+${tags.length - 1})` : "";
+      nameOneLine = `<span class="cell-clip" title="${escapeHtml(tags.join("\n"))}">${escapeHtml(main)}${escapeHtml(extra)}</span>`;
+    }
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="img-sel" data-id="${escapeHtml(selKey)}" data-ref="${escapeHtml(ref)}" ${checked} /></td>
-      <td class="cell-text">${nameHtml}</td>
-      <td class="col-id mono small"><span class="cell-clip" title="${escapeHtml(img.full_id || img.id || "")}">${escapeHtml(shortId)}</span></td>
+      <td class="cell-text">${nameOneLine}</td>
+      <td class="col-id mono small" title="${escapeHtml(img.full_id || img.id || "")}">${escapeHtml(shortId)}</td>
       <td class="col-size">${fmtBytes(img.size)}</td>
-      <td class="col-date muted small">${escapeHtml(fmtImageCreated(img.created))}</td>
+      <td class="col-date muted small">${escapeHtml(createdLabel)}</td>
       <td class="col-used">${usedHtml}</td>
       <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
-    // Only two actions — show both inline (no 更多); keeps row height stable
-    fillActionGroup(
-      actions,
-      [
-        { label: "历史", fn: () => showImageHistory(ref) },
-        { label: "删除", fn: () => doImageRemove(ref), danger: true, disabled: !state.takeover },
-      ],
-      [],
-      { maxPrimary: 2 }
+    // Two inline buttons only — no nested details (avoids layout quirks)
+    const g = document.createElement("div");
+    g.className = "action-group";
+    g.appendChild(actionBtn("历史", () => showImageHistory(ref)));
+    g.appendChild(
+      actionBtn("删除", () => doImageRemove(ref), { danger: true, disabled: !state.takeover })
     );
+    actions.appendChild(g);
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="7" class="muted">无镜像</td></tr>`;

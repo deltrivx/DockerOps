@@ -535,51 +535,85 @@ a { color: var(--cyan); }
 
 .table-wrap {
   overflow-x: auto;
-  overflow-y: visible;
   -webkit-overflow-scrolling: touch;
   max-width: 100%;
   width: 100%;
 }
-/* Tables must stay real tables — never set display:flex/grid on td/th/tr */
+/*
+ * HARD RULES for resource tables:
+ * - never display:flex/grid on table/tr/td/th (collapses columns → vertical letter wrap)
+ * - table-layout:fixed + percentage col widths so name column gets real space
+ * - single-line ellipsis on text; action cells overflow:visible
+ */
 table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.86rem;
-  table-layout: auto;
-}
-table.data-table {
-  width: 100%;
   table-layout: fixed;
-  font-size: 0.86rem;
 }
+/* restore native table display roles if anything else overrode them */
+table { display: table; }
+thead { display: table-header-group; }
+tbody { display: table-row-group; }
+tr { display: table-row; }
 th, td {
-  display: table-cell; /* override any accidental flex on utility classes */
+  display: table-cell !important;
   text-align: left;
-  padding: 0.5rem 0.55rem;
+  padding: 0.45rem 0.5rem;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
   box-sizing: border-box;
-}
-/* Text columns: single-line ellipsis on the cell itself */
-table.data-table th,
-table.data-table td {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  word-break: normal;
+  max-width: 0; /* required for ellipsis under table-layout:fixed */
 }
-table.data-table td.cell-text,
-table.data-table th.cell-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
+/* Checkbox / numeric / action cols: allow natural min width (override max-width:0) */
+td.col-check, th.col-check,
+td.col-status, th.col-status,
+td.col-health, th.col-health,
+td.col-num, th.col-num,
+td.col-size, th.col-size,
+td.col-date, th.col-date,
+td.col-used, th.col-used,
+td.col-id, th.col-id,
+td.col-mgr, th.col-mgr,
+td.col-run, th.col-run {
+  max-width: none;
   white-space: nowrap;
-  min-width: 0;
+}
+td.col-check, th.col-check {
+  width: 3%;
+  text-align: center;
+  overflow: visible;
+  max-width: none;
+}
+td.col-status, th.col-status { width: 7%; }
+td.col-health, th.col-health { width: 6%; }
+td.col-num, th.col-num { width: 5%; text-align: right; font-variant-numeric: tabular-nums; }
+td.col-size, th.col-size { width: 8%; text-align: right; font-variant-numeric: tabular-nums; }
+td.col-date, th.col-date { width: 12%; font-variant-numeric: tabular-nums; }
+td.col-used, th.col-used { width: 5%; text-align: center; }
+td.col-id, th.col-id { width: 9%; }
+td.col-mgr, th.col-mgr { width: 8%; }
+td.col-run, th.col-run { width: 6%; text-align: center; }
+/* Actions: never flex the td; never max-width:0 */
+td.col-actions, th.col-actions,
+td.actions {
+  display: table-cell !important;
+  width: 12%;
+  max-width: none !important;
+  overflow: visible !important;
+  white-space: nowrap !important;
+  text-align: right;
+  vertical-align: middle;
+  padding-right: 0.55rem;
 }
 /* Global .mono uses pre-wrap for logs — force single-line inside tables */
 table .mono,
 td.mono,
-th.mono,
-table .mono .cell-clip,
-td .mono {
+th.mono {
   white-space: nowrap !important;
   word-break: normal !important;
   overflow: hidden;
@@ -589,95 +623,63 @@ td .mono {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap !important;
-  max-width: 100%;
-  min-width: 0;
-  /* inline-block keeps ellipsis working without breaking table-cell layout */
-  display: inline-block;
-  vertical-align: bottom;
-  max-width: 100%;
-}
-/* Fixed-ish columns via colgroup % / rem — keep content tight */
-td.col-check,
-th.col-check { width: 2.25rem; text-align: center; padding-left: 0.4rem; padding-right: 0.25rem; overflow: visible; }
-td.col-status,
-th.col-status { width: 5.25rem; }
-td.col-health,
-th.col-health { width: 4.75rem; }
-td.col-num,
-th.col-num { width: 3.25rem; font-variant-numeric: tabular-nums; text-align: right; }
-td.col-size,
-th.col-size { width: 5.25rem; font-variant-numeric: tabular-nums; text-align: right; }
-td.col-date,
-th.col-date { width: 8rem; font-variant-numeric: tabular-nums; }
-td.col-used,
-th.col-used { width: 3.5rem; text-align: center; }
-td.col-id,
-th.col-id { width: 6.25rem; }
-td.col-mgr,
-th.col-mgr { width: 6rem; }
-td.col-run,
-th.col-run { width: 4.25rem; text-align: center; }
-/* Actions: stay table-cell; flex only on inner .action-group */
-td.col-actions,
-th.col-actions,
-td.actions {
-  display: table-cell !important; /* CRITICAL: never flex the <td> */
-  width: 9rem;
-  overflow: visible !important;
-  white-space: nowrap !important;
-  text-align: right;
-  vertical-align: middle;
-  padding-right: 0.6rem;
-}
-.tag-list {
   display: block;
+  width: 100%;
   min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
 }
-.tag-list .tag-main {
-  font-weight: 600;
+/* Image name: one line "repo:tag" (not multi-line vertical stack) */
+.img-name-cell {
+  display: block;
+  width: 100%;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.img-name-cell .img-repo,
+.img-name-cell .img-tag {
+  display: inline;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.img-name-cell .img-tag {
+  color: var(--cyan);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-weight: 500;
+  font-size: 0.86rem;
+}
+.img-name-cell .tag-more {
+  display: none; /* keep row height 1 line; full tags in title */
+}
+.tag-list {
+  display: block;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag-list .tag-main {
+  font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.82rem;
   color: #c4b5fd;
 }
-.tag-list .tag-more {
-  font-size: 0.72rem;
-  color: var(--muted);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.img-name-cell {
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-}
-.img-name-cell .img-repo {
-  display: block;
-  font-weight: 600;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.img-name-cell .img-tag {
-  display: block;
-  color: var(--cyan);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 0.8rem;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.img-name-cell .tag-more {
-  display: block;
-  font-size: 0.72rem;
-  color: var(--muted);
-}
+.tag-list .tag-more { display: none; }
+/* Images table column share (name gets ~half) */
+table.images-table th.col-check,
+table.images-table td.col-check { width: 3%; }
+table.images-table th.cell-text,
+table.images-table td.cell-text { width: 46%; max-width: 0; }
+table.images-table th.col-id,
+table.images-table td.col-id { width: 10%; }
+table.images-table th.col-size,
+table.images-table td.col-size { width: 9%; }
+table.images-table th.col-date,
+table.images-table td.col-date { width: 12%; }
+table.images-table th.col-used,
+table.images-table td.col-used { width: 6%; }
+table.images-table th.col-actions,
+table.images-table td.col-actions { width: 14%; max-width: none !important; }
 .badge-dangling {
   display: inline-block;
   font-size: 0.72rem;
@@ -914,39 +916,32 @@ tbody tr:nth-last-child(-n+3) .action-menu-panel {
 .action-menu-panel .btn.danger {
   margin-top: 0.12rem;
 }
-/* Per-table action width */
-table.images-table col.col-actions,
+/* Prefer percentage widths (rem fixed widths crushed name column to ~2ch) */
+table.images-table,
+table.containers-table,
+table.updates-table,
+table.compose-table,
+table.unraid-table,
+table.networks-table,
+table.volumes-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 720px;
+}
 table.images-table th.col-actions,
-table.images-table td.col-actions { width: 8rem; }
-table.containers-table col.col-actions,
+table.images-table td.col-actions { width: 14%; max-width: none !important; }
 table.containers-table th.col-actions,
-table.containers-table td.col-actions { width: 9rem; }
-table.updates-table col.col-actions,
+table.containers-table td.col-actions { width: 14%; max-width: none !important; }
 table.updates-table th.col-actions,
-table.updates-table td.col-actions { width: 8rem; }
-table.compose-table col.col-actions,
+table.updates-table td.col-actions,
 table.compose-table th.col-actions,
 table.compose-table td.col-actions,
-table.unraid-table col.col-actions,
 table.unraid-table th.col-actions,
 table.unraid-table td.col-actions,
-table.networks-table col.col-actions,
 table.networks-table th.col-actions,
 table.networks-table td.col-actions,
-table.volumes-table col.col-actions,
 table.volumes-table th.col-actions,
-table.volumes-table td.col-actions { width: 8.5rem; }
-/* Images: name column takes remaining space */
-table.images-table {
-  table-layout: fixed;
-  width: 100%;
-  min-width: 640px;
-}
-table.containers-table {
-  table-layout: fixed;
-  width: 100%;
-  min-width: 760px;
-}
+table.volumes-table td.col-actions { width: 14%; max-width: none !important; }
 td.cell-text .pill {
   vertical-align: middle;
   margin-left: 0.2rem;

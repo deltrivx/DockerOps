@@ -129,6 +129,23 @@ def _env_first(*keys: str) -> str:
     return ""
 
 
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "http_proxy",
+    "HTTPS_PROXY",
+    "https_proxy",
+    "NO_PROXY",
+    "no_proxy",
+    "DOCKEROPS_HTTP_PROXY",
+    "DOCKEROPS_HTTPS_PROXY",
+    "DOCKEROPS_NO_PROXY",
+)
+
+# Snapshot: True only if container/process env had proxy BEFORE we apply SQLite values.
+# Applying stored proxy must NOT flip this, or UI locks and redeploy looks like "reset".
+_proxy_env_locked_at_boot: bool | None = None
+
+
 def read_process_proxy() -> dict[str, str]:
     """
     Resolve proxy from process env (standard names first, then DOCKEROPS_*).
@@ -140,20 +157,30 @@ def read_process_proxy() -> dict[str, str]:
     }
 
 
+def _any_proxy_env_set() -> bool:
+    return any(bool(os.environ.get(k, "").strip()) for k in _PROXY_ENV_KEYS)
+
+
+def capture_proxy_env_lock_at_boot() -> bool:
+    """
+    Call once after Settings bootstrap (DOCKEROPS_* → env) and BEFORE applying SQLite proxy.
+    """
+    global _proxy_env_locked_at_boot
+    if _proxy_env_locked_at_boot is None:
+        _proxy_env_locked_at_boot = _any_proxy_env_set()
+    return _proxy_env_locked_at_boot
+
+
 def env_proxy_locked() -> bool:
-    """True if any standard or DOCKEROPS_* proxy env is explicitly set."""
-    keys = (
-        "HTTP_PROXY",
-        "http_proxy",
-        "HTTPS_PROXY",
-        "https_proxy",
-        "NO_PROXY",
-        "no_proxy",
-        "DOCKEROPS_HTTP_PROXY",
-        "DOCKEROPS_HTTPS_PROXY",
-        "DOCKEROPS_NO_PROXY",
-    )
-    return any(bool(os.environ.get(k, "").strip()) for k in keys)
+    """
+    True if proxy was configured via container env at process start.
+    Web-saved SQLite proxy must remain editable across restarts.
+    """
+    global _proxy_env_locked_at_boot
+    if _proxy_env_locked_at_boot is None:
+        # Fallback if capture not called yet (tests): do not treat applied runtime env as lock
+        return False
+    return bool(_proxy_env_locked_at_boot)
 
 
 def apply_proxy_to_environ(http: str = "", https: str = "", no_proxy: str = "") -> None:
@@ -196,5 +223,7 @@ def get_settings() -> Settings:
     if os.environ.get("DOCKER_HOST") and not os.environ.get("DOCKEROPS_DOCKER_HOST"):
         s.docker_host = os.environ["DOCKER_HOST"]
     bootstrap_proxy_from_settings(s)
+    # Capture lock after Settings/env bootstrap, before any SQLite apply.
+    capture_proxy_env_lock_at_boot()
     s.ensure_dirs()
     return s

@@ -506,6 +506,36 @@ def docker_events(since: int | None = None, until: int | None = None, filters: d
 # ── Images ─────────────────────────────────────────────────
 
 
+def _fmt_image_created(created: Any) -> str:
+    """Normalize Docker Created (unix float/int or nanosecond ISO) to YYYY-MM-DD HH:MM."""
+    if created is None or created == "":
+        return "—"
+    try:
+        if isinstance(created, (int, float)):
+            from datetime import datetime, timezone
+
+            dt = datetime.fromtimestamp(float(created), tz=timezone.utc).astimezone()
+            return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        pass
+    s = str(created).strip()
+    # 2026-05-28T07:49:24.130421496Z → keep 3 fractional digits for fromisoformat
+    import re
+
+    s2 = re.sub(r"(\.\d{3})\d+", r"\1", s)
+    s2 = s2.replace("Z", "+00:00")
+    try:
+        from datetime import datetime
+
+        dt = datetime.fromisoformat(s2)
+        return dt.strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        m = re.match(r"(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})", s)
+        if m:
+            return f"{m.group(1)} {m.group(2)}"
+        return s[:16]
+
+
 def list_images() -> list[dict[str, Any]]:
     """
     Portainer-like image list: short id, tags, size, created, dangling, used_by.
@@ -557,6 +587,7 @@ def list_images() -> list[dict[str, Any]]:
         if full_id.startswith("sha256:"):
             bare = full_id[7:]
             used = max(used, usage.get(bare[:12], 0), usage.get(bare, 0))
+        created_raw = attrs.get("Created")
         out.append(
             {
                 "id": short,
@@ -564,7 +595,8 @@ def list_images() -> list[dict[str, Any]]:
                 "tags": tags,
                 "label": tags[0] if tags else short or full_id[:12],
                 "size": attrs.get("Size") or 0,
-                "created": attrs.get("Created"),
+                "created": created_raw,
+                "created_fmt": _fmt_image_created(created_raw),
                 "dangling": dangling,
                 "used_by": int(used),
             }

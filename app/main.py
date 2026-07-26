@@ -31,6 +31,7 @@ from compose_mgr import (
 )
 from config import (
     apply_proxy_to_environ,
+    capture_proxy_env_lock_at_boot,
     env_proxy_locked,
     get_settings,
     read_process_proxy,
@@ -83,8 +84,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.8"
+VERSION = "0.4.9"
 CHANGELOG = [
+    {
+        "version": "0.4.9",
+        "date": "2026-07-26",
+        "items": [
+            "镜像表布局重写：百分比列宽 + 名称单行省略，杜绝竖排/列错位",
+            "代理写入 SQLite system_proxy 并在启动恢复；env 锁定仅认启动时容器变量，Web 保存不再误锁",
+            "静态资源 ?v= 缓存破坏；创建时间服务端格式化",
+        ],
+    },
     {
         "version": "0.4.8",
         "date": "2026-07-26",
@@ -331,7 +341,11 @@ def _load_stored_proxy() -> dict[str, str]:
 
 
 def _resolve_proxy_view() -> dict[str, Any]:
-    """Env wins over stored; expose source for UI lock."""
+    """
+    Env-at-boot wins (locked UI). Otherwise SQLite system_proxy is source of truth.
+    Runtime process env may mirror stored values after apply — still source=stored.
+    """
+    capture_proxy_env_lock_at_boot()
     locked = env_proxy_locked()
     env_p = read_process_proxy()
     stored = _load_stored_proxy()
@@ -351,6 +365,7 @@ def _resolve_proxy_view() -> dict[str, Any]:
             "source": "stored",
             "env_locked": False,
         }
+    # no stored and not boot-locked — show empty (ignore leftover process env)
     return {
         "http": "",
         "https": "",
@@ -361,7 +376,8 @@ def _resolve_proxy_view() -> dict[str, Any]:
 
 
 def _apply_stored_proxy_at_startup() -> None:
-    """If no env proxy, re-apply SQLite proxy into process env after restart."""
+    """If no container-env proxy at boot, re-apply SQLite proxy into process env."""
+    capture_proxy_env_lock_at_boot()
     if env_proxy_locked():
         return
     stored = _load_stored_proxy()
@@ -985,9 +1001,10 @@ def api_get_system_settings(actor: OptionalUser = None) -> dict[str, Any]:
 
 @app.put("/api/system/settings")
 def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[str, Any]:
-    """保存系统代理（env 未锁定时）与自动更新检测设置。"""
+    """保存系统代理（容器 env 未锁定时写 SQLite）与自动更新检测设置。"""
     messages: list[str] = []
     patch = body.model_dump(exclude_none=True)
+    capture_proxy_env_lock_at_boot()
 
     # Auto-update settings (always writable)
     auto_patch: dict[str, Any] = {}
@@ -1001,25 +1018,30 @@ def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[s
         messages.append("自动更新检测已保存")
         audit("update_auto_settings", actor=actor or "unknown", detail=auto)
 
-    # Proxy: env wins
+    # Proxy: only container env-at-boot locks; Web values always go to SQLite app_meta
     proxy_keys = {"http_proxy", "https_proxy", "no_proxy"}
     if proxy_keys & set(patch.keys()):
         if env_proxy_locked():
             raise HTTPException(
                 status_code=400,
-                detail="代理已由环境变量配置，设置页只读。请修改容器变量 HTTP_PROXY/HTTPS_PROXY/NO_PROXY 或 DOCKEROPS_*_PROXY 后重建容器。",
+                detail="代理已由容器环境变量配置（启动时），设置页只读。请修改容器变量 HTTP_PROXY/HTTPS_PROXY/NO_PROXY 或 DOCKEROPS_*_PROXY 后重建容器。",
             )
-        cur = _load_stored_proxy()
+        base = _load_stored_proxy()
         if "http_proxy" in patch:
-            cur["http"] = str(patch["http_proxy"] or "").strip()
+            base["http"] = str(patch["http_proxy"] or "").strip()
         if "https_proxy" in patch:
-            cur["https"] = str(patch["https_proxy"] or "").strip()
+            base["https"] = str(patch["https_proxy"] or "").strip()
         if "no_proxy" in patch:
-            cur["no_proxy"] = str(patch["no_proxy"] or "").strip()
-        set_meta(META_SYSTEM_PROXY, json.dumps(cur, ensure_ascii=False))
-        apply_proxy_to_environ(http=cur["http"], https=cur["https"], no_proxy=cur["no_proxy"])
-        messages.append("代理已保存并应用到进程环境")
-        audit("system_proxy_update", actor=actor or "unknown", detail={**cur, "source": "stored"})
+            base["no_proxy"] = str(patch["no_proxy"] or "").strip()
+        payload = json.dumps(base, ensure_ascii=False)
+        set_meta(META_SYSTEM_PROXY, payload)
+        # verify round-trip so redeploy cannot silently lose proxy
+        written = get_meta(META_SYSTEM_PROXY)
+        if written != payload:
+            raise HTTPException(status_code=500, detail="代理写入 SQLite 失败，请检查 /data 卷权限")
+        apply_proxy_to_environ(http=base["http"], https=base["https"], no_proxy=base["no_proxy"])
+        messages.append("代理已写入 SQLite 并应用到进程（重启后自动恢复）")
+        audit("system_proxy_update", actor=actor or "unknown", detail={**base, "source": "stored", "persisted": True})
 
     proxy = _resolve_proxy_view()
     return {
@@ -1124,6 +1146,8 @@ def index(request: Request) -> HTMLResponse:
             "request": request,
             "title": "DockerOps",
             "subtitle": "NAS 日常运维 · 首次设置向导 · Tower / 飞牛引擎级接管",
+            "version": VERSION,
+            "asset_v": VERSION,
         },
     )
 

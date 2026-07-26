@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.4.9') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -57,7 +57,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.4.8 · —
+        v0.4.9 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -187,11 +187,11 @@
           <div class="table-wrap">
             <table class="data-table ops-table">
               <colgroup>
-                <col class="col-date" style="width:9rem" />
+                <col style="width:16%" />
                 <col style="width:18%" />
-                <col />
-                <col class="col-status" style="width:5rem" />
-                <col style="width:8rem" />
+                <col style="width:40%" />
+                <col style="width:10%" />
+                <col style="width:16%" />
               </colgroup>
               <thead>
                 <tr>
@@ -245,14 +245,14 @@
           <div class="table-wrap">
             <table class="containers-table data-table">
               <colgroup>
-                <col class="col-check" style="width:2rem" />
+                <col style="width:3%" />
                 <col style="width:18%" />
-                <col class="col-mgr" style="width:5.6rem" />
-                <col />
-                <col class="col-status" style="width:5rem" />
-                <col class="col-health" style="width:4.5rem" />
-                <col class="col-num" style="width:3rem" />
-                <col class="col-actions" style="width:8.75rem" />
+                <col style="width:8%" />
+                <col style="width:30%" />
+                <col style="width:8%" />
+                <col style="width:7%" />
+                <col style="width:6%" />
+                <col style="width:14%" />
               </colgroup>
               <thead>
                 <tr>
@@ -291,13 +291,13 @@
           <div class="table-wrap">
             <table class="data-table updates-table">
               <colgroup>
-                <col class="col-check" style="width:2rem" />
+                <col style="width:3%" />
                 <col style="width:16%" />
-                <col class="col-mgr" style="width:5.6rem" />
-                <col />
-                <col class="col-status" style="width:5rem" />
+                <col style="width:8%" />
+                <col style="width:30%" />
+                <col style="width:8%" />
+                <col style="width:21%" />
                 <col style="width:14%" />
-                <col class="col-actions" style="width:7.5rem" />
               </colgroup>
               <thead>
                 <tr>
@@ -331,9 +331,9 @@
               <colgroup>
                 <col style="width:18%" />
                 <col style="width:22%" />
-                <col class="col-run" style="width:4rem" />
-                <col />
-                <col class="col-actions" style="width:8.5rem" />
+                <col style="width:8%" />
+                <col style="width:38%" />
+                <col style="width:14%" />
               </colgroup>
               <thead>
                 <tr>
@@ -364,10 +364,10 @@
             <table class="unraid-table data-table">
               <colgroup>
                 <col style="width:20%" />
-                <col />
-                <col class="col-status" style="width:6rem" />
-                <col class="col-status" style="width:5.5rem" />
-                <col class="col-actions" style="width:8.5rem" />
+                <col style="width:40%" />
+                <col style="width:13%" />
+                <col style="width:13%" />
+                <col style="width:14%" />
               </colgroup>
               <thead>
                 <tr>
@@ -410,13 +410,13 @@
           <div class="table-wrap">
             <table class="images-table data-table">
               <colgroup>
-                <col class="col-check" style="width:2.25rem" />
-                <col style="width:auto" />
-                <col class="col-id" style="width:6.25rem" />
-                <col class="col-size" style="width:5.25rem" />
-                <col class="col-date" style="width:8rem" />
-                <col class="col-used" style="width:3.5rem" />
-                <col class="col-actions" style="width:8rem" />
+                <col style="width:3%" />
+                <col style="width:46%" />
+                <col style="width:10%" />
+                <col style="width:9%" />
+                <col style="width:12%" />
+                <col style="width:6%" />
+                <col style="width:14%" />
               </colgroup>
               <thead>
                 <tr>
@@ -452,10 +452,10 @@
             <table class="networks-table data-table">
               <colgroup>
                 <col style="width:22%" />
-                <col class="col-status" style="width:5.5rem" />
-                <col />
-                <col class="col-num" style="width:4rem" />
-                <col class="col-actions" style="width:8.5rem" />
+                <col style="width:12%" />
+                <col style="width:42%" />
+                <col style="width:10%" />
+                <col style="width:14%" />
               </colgroup>
               <thead>
                 <tr>
@@ -490,9 +490,9 @@
             <table class="volumes-table data-table">
               <colgroup>
                 <col style="width:28%" />
-                <col class="col-status" style="width:5.5rem" />
-                <col />
-                <col class="col-actions" style="width:8.5rem" />
+                <col style="width:12%" />
+                <col style="width:46%" />
+                <col style="width:14%" />
               </colgroup>
               <thead>
                 <tr>
@@ -652,7 +652,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.4.8</span> ·
+        DockerOps <span id="foot-version">v0.4.9</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -714,7 +714,7 @@
     <div id="detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/particles.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.4.9') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.4.9') }}"></script>
 </body>
 </html>
