@@ -598,11 +598,11 @@ td.col-used, th.col-used { width: 5%; text-align: center; }
 td.col-id, th.col-id { width: 9%; }
 td.col-mgr, th.col-mgr { width: 8%; }
 td.col-run, th.col-run { width: 6%; text-align: center; }
-/* Actions: never flex the td; never max-width:0 */
+/* Actions: never flex the td; never max-width:0 — prefer room for primary buttons */
 td.col-actions, th.col-actions,
 td.actions {
   display: table-cell !important;
-  width: 12%;
+  width: 28%;
   max-width: none !important;
   overflow: visible !important;
   white-space: nowrap !important;
@@ -665,21 +665,21 @@ th.mono {
   color: #c4b5fd;
 }
 .tag-list .tag-more { display: none; }
-/* Images table column share (name gets ~half) */
+/* Images table: name flexible, actions wider for history/delete */
 table.images-table th.col-check,
 table.images-table td.col-check { width: 3%; }
 table.images-table th.cell-text,
-table.images-table td.cell-text { width: 46%; max-width: 0; }
+table.images-table td.cell-text { width: 34%; max-width: 0; }
 table.images-table th.col-id,
-table.images-table td.col-id { width: 10%; }
+table.images-table td.col-id { width: 9%; }
 table.images-table th.col-size,
-table.images-table td.col-size { width: 9%; }
+table.images-table td.col-size { width: 8%; }
 table.images-table th.col-date,
-table.images-table td.col-date { width: 12%; }
+table.images-table td.col-date { width: 10%; }
 table.images-table th.col-used,
-table.images-table td.col-used { width: 6%; }
+table.images-table td.col-used { width: 12%; max-width: 0; }
 table.images-table th.col-actions,
-table.images-table td.col-actions { width: 14%; max-width: none !important; }
+table.images-table td.col-actions { width: 24%; max-width: none !important; }
 .badge-dangling {
   display: inline-block;
   font-size: 0.72rem;
@@ -929,13 +929,13 @@ table.volumes-table {
   min-width: 720px;
 }
 
-/* Desktop default; mobile overrides below reduce min-width after column hide */
+/* Desktop: widen action columns so 2–3 primary buttons fit; text cols stay ellipsis */
 table.images-table th.col-actions,
-table.images-table td.col-actions { width: 14%; max-width: none !important; }
+table.images-table td.col-actions { width: 24%; max-width: none !important; }
 table.containers-table th.col-actions,
-table.containers-table td.col-actions { width: 14%; max-width: none !important; }
+table.containers-table td.col-actions { width: 31%; max-width: none !important; }
 table.updates-table th.col-actions,
-table.updates-table td.col-actions,
+table.updates-table td.col-actions { width: 33%; max-width: none !important; }
 table.compose-table th.col-actions,
 table.compose-table td.col-actions,
 table.unraid-table th.col-actions,
@@ -943,7 +943,81 @@ table.unraid-table td.col-actions,
 table.networks-table th.col-actions,
 table.networks-table td.col-actions,
 table.volumes-table th.col-actions,
-table.volumes-table td.col-actions { width: 14%; max-width: none !important; }
+table.volumes-table td.col-actions { width: 22%; max-width: none !important; }
+
+/* Detect result: compact pill only, no tall multi-line blank */
+table.updates-table td.col-detect,
+table.updates-table th.col-detect {
+  width: 16%;
+  max-width: 0;
+}
+.detect-cell {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.detect-cell .pill { flex: 0 0 auto; }
+.used-by-cell {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.used-by-cell:hover { color: var(--cyan); }
+
+/* Progress dialog */
+dialog.progress-dialog {
+  width: min(560px, 94vw);
+  max-height: 86vh;
+}
+.progress-stage {
+  margin: 0.35rem 0 0.65rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.progress-bars {
+  display: grid;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+  max-height: 160px;
+  overflow: auto;
+}
+.progress-layer {
+  display: grid;
+  grid-template-columns: 4.5rem 1fr 3rem;
+  gap: 0.4rem;
+  align-items: center;
+  font-size: 0.78rem;
+}
+.progress-layer .bar {
+  height: 6px;
+  border-radius: 99px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.progress-layer .bar > i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #6c5ce7, #00d2ff);
+  border-radius: 99px;
+  transition: width 0.15s ease;
+}
+.progress-log {
+  max-height: 220px;
+  overflow: auto;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.35);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
 td.cell-text .pill {
   vertical-align: middle;
   margin-left: 0.2rem;

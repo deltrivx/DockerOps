@@ -3,11 +3,22 @@ from __future__ import annotations
 import json
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from config import get_settings
 from db import add_ops_record, list_ops_records
 from docker_client import get_container, pull_image
+
+ProgressCb = Callable[[dict[str, Any]], None] | None
+
+
+def _emit(on_progress: ProgressCb, payload: dict[str, Any]) -> None:
+    if not on_progress:
+        return
+    try:
+        on_progress(payload)
+    except Exception:
+        pass
 
 
 def records(limit: int = 100) -> list[dict[str, Any]]:
@@ -86,12 +97,14 @@ def safe_update(
     container_id: str,
     image: str | None = None,
     actor: str | None = None,
+    on_progress: ProgressCb = None,
 ) -> dict[str, Any]:
     """
     Route update by manager:
     - compose  -> compose backup + pull + up (up needs takeover)
     - unraid   -> template backup + pull + template recreate (recreate needs takeover)
     - third    -> backup + pull only + adopt hint
+    on_progress: optional callback for stage/pull events (SSE).
     """
     try:
         detail = get_container(container_id)
@@ -103,10 +116,21 @@ def safe_update(
             detail={"error": "container_not_found"},
             actor=actor,
         )
+        _emit(on_progress, {"event": "error", "message": "容器不存在", "container": container_id})
         return {"ok": False, "record": rec, "message": "容器不存在"}
 
     manager = detail.get("manager") or "third_party"
     name = (detail.get("name") or container_id).lstrip("/")
+    _emit(
+        on_progress,
+        {
+            "event": "stage",
+            "stage": "start",
+            "message": f"开始更新 {name}（{manager}）",
+            "container": name,
+            "manager": manager,
+        },
+    )
 
     if manager == "compose" and detail.get("compose_project"):
         from compose_mgr import safe_update_project
@@ -116,6 +140,7 @@ def safe_update(
             actor=actor,
             service=detail.get("compose_service"),
             recreate=True,
+            on_progress=on_progress,
         )
         result["manager"] = "compose"
         result["routed_from"] = name
@@ -125,13 +150,21 @@ def safe_update(
         from unraid_mgr import safe_update_unraid
 
         tpl_name = detail.get("template_name") or name
-        result = safe_update_unraid(tpl_name, actor=actor, repository=image, recreate=True)
+        result = safe_update_unraid(
+            tpl_name,
+            actor=actor,
+            repository=image,
+            recreate=True,
+            on_progress=on_progress,
+        )
         result["manager"] = "unraid"
         result["routed_from"] = name
         return result
 
     # third_party: pull only
-    return _safe_update_third_party(detail, container_id, image=image, actor=actor)
+    return _safe_update_third_party(
+        detail, container_id, image=image, actor=actor, on_progress=on_progress
+    )
 
 
 def _safe_update_third_party(
@@ -139,6 +172,7 @@ def _safe_update_third_party(
     container_id: str,
     image: str | None = None,
     actor: str | None = None,
+    on_progress: ProgressCb = None,
 ) -> dict[str, Any]:
     name = (detail.get("name") or container_id).lstrip("/")
     target_image = image or detail.get("image")
@@ -150,14 +184,48 @@ def _safe_update_third_party(
             detail={"error": "no_image", "manager": "third_party"},
             actor=actor,
         )
+        _emit(on_progress, {"event": "error", "message": "无法解析镜像名", "container": name})
         return {"ok": False, "record": rec, "message": "无法解析镜像名"}
 
+    _emit(on_progress, {"event": "stage", "stage": "backup", "message": "备份元数据…", "container": name})
     backup = _backup_raw(detail, container_id, actor=actor)
     if not backup.get("ok"):
+        _emit(on_progress, {"event": "error", "message": "备份失败", "container": name})
         return {"ok": False, "message": "备份失败，已中止更新", "backup": backup}
 
+    def _pull_cb(chunk: dict[str, Any]) -> None:
+        pd = chunk.get("progressDetail") or {}
+        cur = pd.get("current")
+        total = pd.get("total")
+        percent = None
+        if isinstance(cur, (int, float)) and isinstance(total, (int, float)) and total:
+            percent = round(float(cur) / float(total) * 100, 1)
+        _emit(
+            on_progress,
+            {
+                "event": "pull",
+                "status": chunk.get("status") or "",
+                "id": chunk.get("id") or "",
+                "current": cur,
+                "total": total,
+                "percent": percent,
+                "container": name,
+                "image": target_image,
+            },
+        )
+
+    _emit(
+        on_progress,
+        {
+            "event": "stage",
+            "stage": "pull",
+            "message": f"拉取镜像 {target_image}",
+            "container": name,
+            "image": target_image,
+        },
+    )
     try:
-        pull_result = pull_image(target_image)
+        pull_result = pull_image(target_image, on_progress=_pull_cb)
         pull_ok = True
         pull_err = None
     except Exception as e:
@@ -184,17 +252,28 @@ def _safe_update_third_party(
         },
         actor=actor,
     )
+    msg = (
+        "三方容器：已备份并拉镜像；未裸 docker run 重建。可用 Adopt/Compose 纳入正规管理。"
+        if pull_ok
+        else f"拉镜像失败：{pull_err}"
+    )
+    _emit(
+        on_progress,
+        {
+            "event": "stage",
+            "stage": "done" if pull_ok else "error",
+            "message": msg,
+            "container": name,
+            "ok": pull_ok,
+        },
+    )
     return {
         "ok": pull_ok,
         "manager": "third_party",
         "record": rec,
         "backup": backup,
         "pull": pull_result,
-        "message": (
-            "三方容器：已备份并拉镜像；未裸 docker run 重建。可用 Adopt/Compose 纳入正规管理。"
-            if pull_ok
-            else f"拉镜像失败：{pull_err}"
-        ),
+        "message": msg,
         "adopt_path": f"/api/unraid/adopt/{detail.get('id') or name}",
     }
 

@@ -183,12 +183,22 @@ def backup_template(name: str, actor: str | None = None) -> dict[str, Any]:
     }
 
 
+def _emit_progress(on_progress, payload: dict[str, Any]) -> None:
+    if not on_progress:
+        return
+    try:
+        on_progress(payload)
+    except Exception:
+        pass
+
+
 def safe_update_unraid(
     name: str,
     actor: str | None = None,
     *,
     repository: str | None = None,
     recreate: bool = True,
+    on_progress=None,
 ) -> dict[str, Any]:
     """Template-driven safe update (Unraid semantics, not docker run string)."""
     settings = get_settings()
@@ -206,8 +216,10 @@ def safe_update_unraid(
         )
         return {"ok": False, "record": rec, "message": f"未找到模板 {name}"}
 
+    _emit_progress(on_progress, {"event": "stage", "stage": "backup", "message": f"备份模板 {name}", "container": name})
     backup = backup_template(name, actor=actor)
     if not backup.get("ok"):
+        _emit_progress(on_progress, {"event": "error", "message": "备份失败", "container": name})
         return {"ok": False, "message": "备份失败，已中止", "backup": backup}
 
     # optional repository patch on XML
@@ -224,8 +236,33 @@ def safe_update_unraid(
     if not target_image:
         return {"ok": False, "message": "模板缺少 Repository", "backup": backup}
 
+    def _pull_cb(chunk: dict[str, Any]) -> None:
+        pd = chunk.get("progressDetail") or {}
+        cur = pd.get("current")
+        total = pd.get("total")
+        percent = None
+        if isinstance(cur, (int, float)) and isinstance(total, (int, float)) and total:
+            percent = round(float(cur) / float(total) * 100, 1)
+        _emit_progress(
+            on_progress,
+            {
+                "event": "pull",
+                "status": chunk.get("status") or "",
+                "id": chunk.get("id") or "",
+                "current": cur,
+                "total": total,
+                "percent": percent,
+                "container": name,
+                "image": target_image,
+            },
+        )
+
+    _emit_progress(
+        on_progress,
+        {"event": "stage", "stage": "pull", "message": f"拉取镜像 {target_image}", "container": name, "image": target_image},
+    )
     try:
-        pull = pull_image(target_image)
+        pull = pull_image(target_image, on_progress=_pull_cb)
         pull_ok = True
         pull_err = None
     except Exception as e:
@@ -290,6 +327,10 @@ def safe_update_unraid(
         }
 
     # Template-driven recreate
+    _emit_progress(
+        on_progress,
+        {"event": "stage", "stage": "recreate", "message": f"按模板重建 {name}", "container": name},
+    )
     was_running = False
     old = None
     try:
@@ -337,13 +378,15 @@ def safe_update_unraid(
             },
             actor=actor,
         )
+        msg = f"已按 Unraid 模板安全更新并重建 {name}（dockerman，非三方）"
+        _emit_progress(on_progress, {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True})
         return {
             "ok": True,
             "record": rec,
             "backup": backup,
             "pull": pull,
             "container": created,
-            "message": f"已按 Unraid 模板安全更新并重建 {name}（dockerman，非三方）",
+            "message": msg,
         }
     except Exception as e:
         rec = add_ops_record(
@@ -353,12 +396,14 @@ def safe_update_unraid(
             detail={"step": "recreate", "error": str(e), "backup": backup.get("backup_path"), "pull": pull},
             actor=actor,
         )
+        msg = f"模板重建失败：{e}。请用备份 XML 在 Unraid 中恢复。"
+        _emit_progress(on_progress, {"event": "error", "message": msg, "container": name})
         return {
             "ok": False,
             "record": rec,
             "backup": backup,
             "pull": pull,
-            "message": f"模板重建失败：{e}。请用备份 XML 在 Unraid 中恢复。",
+            "message": msg,
         }
 
 

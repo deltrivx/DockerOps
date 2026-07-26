@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.5.1",
+  version: "0.5.2",
   tab: "overview",
   /** Live log stream controller */
   logs: {
@@ -340,14 +340,13 @@ function isNarrowScreen() {
   }
 }
 
-function actionMaxPrimary(defaultN = 2) {
+function actionMaxPrimary(defaultN = 3) {
   return isNarrowScreen() ? 1 : defaultN;
 }
 
 /**
- * Compact actions: at most 2 primary buttons + "更多" dropdown.
- * Keeps the 操作 column a fixed narrow strip so tables don't split mid-row.
- * On narrow screens defaults to 1 primary to avoid action-column crush.
+ * Compact actions: desktop up to 3 primary buttons + "更多" dropdown.
+ * Wider action column leaves room for stop/log/update; narrow screens stay at 1.
  * @param {HTMLElement} host
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean, primary?:boolean}[]} primary
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean}[]} [more]
@@ -356,7 +355,7 @@ function actionMaxPrimary(defaultN = 2) {
 function fillActionGroup(host, primary, more = [], opts = {}) {
   host.classList.add("actions", "col-actions");
   host.innerHTML = "";
-  const maxPrimary = opts.maxPrimary ?? actionMaxPrimary(2);
+  const maxPrimary = opts.maxPrimary ?? actionMaxPrimary(3);
   const allPrimary = (primary || []).filter(Boolean);
   const shown = allPrimary.slice(0, maxPrimary);
   const overflow = allPrimary.slice(maxPrimary);
@@ -632,15 +631,16 @@ function renderContainers() {
     const actions = tr.querySelector(".actions");
     const running = (c.status || "").toLowerCase() === "running";
     const paused = (c.status || "").toLowerCase() === "paused";
-    // Primary: lifecycle + (更新|日志); 终端/kill 等进更多 — 窄屏 maxPrimary=1
+    // Primary: lifecycle + 日志 + (更新|详情); 其余进更多 — 桌面最多 3 个
     const primary = [];
     if (!running && !paused) primary.push({ label: "启动", fn: () => doLife(id, "start") });
     else if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
     else primary.push({ label: "停止", fn: () => doLife(id, "stop") });
+    primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
     if (upd && upd.update_available) {
       primary.push({ label: "更新", fn: () => doUpdate(id), primary: true });
     } else {
-      primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
+      primary.push({ label: "详情", fn: () => showDetail(id, c.name) });
     }
     const more = [
       running ? { label: "重启", fn: () => doLife(id, "restart") } : null,
@@ -649,8 +649,7 @@ function renderContainers() {
         fn: () => openConsole(id, c.name),
         disabled: !state.consoleEnabled || !running,
       },
-      upd && upd.update_available ? { label: "日志", fn: () => showLogs(id, c.name) } : null,
-      { label: "详情", fn: () => showDetail(id, c.name) },
+      !(upd && upd.update_available) ? null : { label: "详情", fn: () => showDetail(id, c.name) },
       running ? { label: "暂停", fn: () => doLife(id, "pause") } : null,
       running ? { label: "强制停止", fn: () => doLife(id, "kill"), danger: true } : null,
       { label: "重命名", fn: () => doRename(id, c.name) },
@@ -774,21 +773,22 @@ function renderUpdates() {
     const canSel = !!u.update_available;
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="upd-sel" data-id="${escapeHtml(u.id || "")}" ${canSel ? "" : "disabled"} ${canSel ? "checked" : ""} /></td>
-      <td class="cell-text"><strong class="cell-clip">${escapeHtml(u.name || "")}</strong><div class="muted mono cell-clip">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
+      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(u.name || "")}">${escapeHtml(u.name || "")}</strong><div class="muted mono cell-clip">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
       <td class="col-mgr">${managerPill(u.manager)}</td>
       <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(u.image || "")}">${escapeHtml(u.image || "-")}</span></td>
       <td class="col-status"><span class="${pillClass(u.status)}">${escapeHtml(u.status || "-")}</span></td>
-      <td class="cell-text"><span class="pill ${pill}">${escapeHtml(label)}</span>
-        <div class="muted small cell-clip" title="${escapeHtml(u.message || "")}">${escapeHtml(u.message || "")}</div>
-      </td>
+      <td class="col-detect"><div class="detect-cell" title="${escapeHtml(u.message || label)}"><span class="pill ${pill}">${escapeHtml(label)}</span></div></td>
       <td class="col-actions actions"></td>
     `;
     if (u.id) {
       fillActionGroup(
         tr.querySelector(".actions"),
-        [{ label: u.update_available ? "更新" : "安全更新", fn: () => doUpdate(u.id), primary: !!u.update_available }],
-        [{ label: "日志", fn: () => showLogs(u.id, u.name) }],
-        { maxPrimary: 1 }
+        [
+          { label: u.update_available ? "更新" : "安全更新", fn: () => doUpdate(u.id), primary: !!u.update_available },
+          { label: "日志", fn: () => showLogs(u.id, u.name) },
+        ],
+        [{ label: "详情", fn: () => showDetail(u.id, u.name) }],
+        { maxPrimary: actionMaxPrimary(2) }
       );
     }
     body.appendChild(tr);
@@ -1288,8 +1288,16 @@ function renderImages() {
     const ref = imageRef(img);
     const selKey = img.full_id || img.id || ref;
     const checked = state.selectedImages.has(selKey) ? "checked" : "";
-    const used = Number(img.used_by) || 0;
-    const usedHtml = used > 0 ? `<strong>${used}</strong>` : `<span class="badge-unused">—</span>`;
+    const usedList = img.used_by_containers || [];
+    const used = Number(img.used_by) || usedList.length || 0;
+    const names = usedList.map((c) => c.name || c.id).filter(Boolean);
+    const usedTitle = names.length ? names.join(", ") : used ? `${used} 个容器` : "未使用";
+    const usedText = used > 0
+      ? `${used}${names.length ? " · " + names.slice(0, 2).join(", ") + (names.length > 2 ? "…" : "") : ""}`
+      : "—";
+    const usedHtml = used > 0
+      ? `<span class="used-by-cell" title="${escapeHtml(usedTitle)}">${escapeHtml(usedText)}</span>`
+      : `<span class="badge-unused">—</span>`;
     const shortId = String(img.id || "").replace(/^sha256:/, "").slice(0, 12);
     // Prefer server-formatted created_fmt (handles Docker nanosecond ISO)
     const createdLabel = img.created_fmt || fmtImageCreated(img.created);
@@ -1312,14 +1320,19 @@ function renderImages() {
       <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
-    // Two inline buttons only — no nested details (avoids layout quirks)
     const g = document.createElement("div");
     g.className = "action-group";
+    g.appendChild(actionBtn("详情", () => showImageDetail(img)));
     g.appendChild(actionBtn("历史", () => showImageHistory(ref)));
     g.appendChild(
       actionBtn("删除", () => doImageRemove(ref), { danger: true, disabled: !state.takeover })
     );
     actions.appendChild(g);
+    tr.querySelector(".used-by-cell")?.addEventListener("click", () => showImageDetail(img));
+    tr.querySelector(".cell-text")?.addEventListener("click", (e) => {
+      if (e.target.closest("input,button,a")) return;
+      showImageDetail(img);
+    });
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="7" class="muted">无镜像</td></tr>`;
@@ -1609,6 +1622,69 @@ async function showDetail(id, name) {
   } catch (e) {
     alert(`详情失败：${e.message}`);
   }
+}
+
+function showImageDetail(img) {
+  if (!img) return;
+  const ref = imageRef(img);
+  const tags = img.tags || [];
+  const usedList = img.used_by_containers || [];
+  $("#image-detail-title").textContent = `镜像 · ${img.label || ref}`;
+  const actions = $("#image-detail-actions");
+  if (actions) {
+    actions.innerHTML = "";
+    const g = document.createElement("div");
+    g.className = "action-group";
+    g.appendChild(actionBtn("历史", () => showImageHistory(ref)));
+    g.appendChild(
+      actionBtn("删除", () => {
+        $("#image-detail-dialog")?.close();
+        doImageRemove(ref);
+      }, { danger: true, disabled: !state.takeover })
+    );
+    actions.appendChild(g);
+  }
+  const contRows = usedList.length
+    ? usedList
+        .map(
+          (c) =>
+            `<tr><td><a href="#" class="img-cont-link" data-id="${escapeHtml(c.id || "")}" data-name="${escapeHtml(c.name || "")}">${escapeHtml(c.name || c.id || "")}</a></td><td><span class="${pillClass(c.state || "")}">${escapeHtml(c.state || "-")}</span></td><td class="mono small">${escapeHtml(c.id || "")}</td></tr>`
+        )
+        .join("")
+    : `<tr><td colspan="3" class="muted">无关联容器（可清理）</td></tr>`;
+  $("#image-detail-body").innerHTML = `
+    <div class="detail-section">
+      <h4>基本信息</h4>
+      <div class="kv-grid">
+        <div class="kv"><span class="k">标签</span><span class="v mono">${escapeHtml(tags.join(", ") || "<none>")}</span></div>
+        <div class="kv"><span class="k">ID</span><span class="v mono">${escapeHtml(img.full_id || img.id || "")}</span></div>
+        <div class="kv"><span class="k">大小</span><span class="v">${fmtBytes(img.size)}</span></div>
+        <div class="kv"><span class="k">创建</span><span class="v">${escapeHtml(img.created_fmt || fmtImageCreated(img.created) || "—")}</span></div>
+        <div class="kv"><span class="k">占用</span><span class="v">${Number(img.used_by) || usedList.length || 0} 个容器</span></div>
+      </div>
+    </div>
+    <div class="detail-section">
+      <h4>关联容器</h4>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>名称</th><th>状态</th><th>ID</th></tr></thead>
+          <tbody>${contRows}</tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  $("#image-detail-body")
+    .querySelectorAll(".img-cont-link")
+    .forEach((a) => {
+      a.addEventListener("click", (e) => {
+        e.preventDefault();
+        $("#image-detail-dialog")?.close();
+        const cid = a.dataset.id;
+        const name = a.dataset.name;
+        if (cid) showDetail(cid, name);
+      });
+    });
+  $("#image-detail-dialog")?.showModal();
 }
 
 async function showImageHistory(ref) {
@@ -1958,22 +2034,191 @@ async function doBackup(id) {
 async function doUpdate(id) {
   if (!requireLogin()) return;
   if (!confirm(`对 ${id} 按管理源执行安全更新？\nCompose→项目 · Unraid→模板重建 · 三方→仅拉镜像`)) return;
+  await runUpdateStream(`/api/ops/update/${encodeURIComponent(id)}/stream`, {}, `更新 · ${id}`);
+}
+
+/** Progress dialog state for update SSE */
+const progressState = {
+  abort: null,
+  layers: {},
+};
+
+function openProgressDialog(title) {
+  progressState.layers = {};
+  const dlg = $("#progress-dialog");
+  if (!dlg) return null;
+  $("#progress-title").textContent = title || "更新进度";
+  $("#progress-stage").textContent = "准备中…";
+  $("#progress-bars").innerHTML = "";
+  $("#progress-log").textContent = "";
+  $("#progress-status").textContent = "";
+  const cancel = $("#progress-cancel");
+  if (cancel) {
+    cancel.disabled = false;
+    cancel.textContent = "取消跟随";
+  }
+  dlg.showModal();
+  return dlg;
+}
+
+function appendProgressLog(line) {
+  const el = $("#progress-log");
+  if (!el) return;
+  el.textContent += (line.endsWith("\n") ? line : line + "\n");
+  el.scrollTop = el.scrollHeight;
+  if (el.textContent.length > 120_000) {
+    el.textContent = el.textContent.slice(-80_000);
+  }
+}
+
+function setProgressStage(text) {
+  const el = $("#progress-stage");
+  if (el) el.textContent = text || "";
+}
+
+function updatePullLayer(ev) {
+  const id = ev.id || ev.status || "layer";
+  if (!id) return;
+  const bars = $("#progress-bars");
+  if (!bars) return;
+  let row = progressState.layers[id];
+  if (!row) {
+    row = document.createElement("div");
+    row.className = "progress-layer";
+    row.innerHTML = `<span class="mono muted">${escapeHtml(String(id).slice(0, 12))}</span><div class="bar"><i></i></div><span class="pct muted">0%</span>`;
+    bars.appendChild(row);
+    progressState.layers[id] = row;
+  }
+  const pct = typeof ev.percent === "number" ? ev.percent : null;
+  const fill = row.querySelector("i");
+  const label = row.querySelector(".pct");
+  if (pct != null && fill) {
+    fill.style.width = `${Math.min(100, Math.max(0, pct))}%`;
+    if (label) label.textContent = `${Math.round(pct)}%`;
+  } else if (ev.status && label) {
+    label.textContent = String(ev.status).slice(0, 10);
+  }
+}
+
+function stopProgressStream() {
+  if (progressState.abort) {
+    try {
+      progressState.abort.abort();
+    } catch (_) {
+      /* ignore */
+    }
+    progressState.abort = null;
+  }
+}
+
+async function runUpdateStream(url, body, title) {
+  openProgressDialog(title);
+  stopProgressStream();
+  const ctrl = new AbortController();
+  progressState.abort = ctrl;
+  let finalOk = null;
+  let finalMsg = "";
   try {
-    const r = await api(`/api/ops/update/${encodeURIComponent(id)}`, {
+    const res = await fetch(url, {
       method: "POST",
-      body: JSON.stringify({}),
+      headers: {
+        ...authHeaders(),
+        "Content-Type": "application/json",
+        Accept: "text/event-stream",
+      },
+      body: JSON.stringify(body || {}),
+      signal: ctrl.signal,
     });
-    alert(r.message || "更新完成");
-    // refresh update cache badges after apply
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(data.detail || data.message || res.statusText);
+    }
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = "";
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const parts = buf.split("\n\n");
+      buf = parts.pop() || "";
+      for (const block of parts) {
+        const lines = block.split("\n");
+        let dataLine = "";
+        for (const ln of lines) {
+          if (ln.startsWith("data:")) dataLine += ln.slice(5).trim();
+        }
+        if (!dataLine) continue;
+        let obj;
+        try {
+          obj = JSON.parse(dataLine);
+        } catch (_) {
+          appendProgressLog(dataLine);
+          continue;
+        }
+        const ev = obj.event || obj.type || "";
+        if (ev === "stage") {
+          const st = obj.stage || "";
+          const msg = obj.message || st;
+          setProgressStage(msg);
+          appendProgressLog(`[${st}] ${msg}`);
+        } else if (ev === "pull") {
+          updatePullLayer(obj);
+          if (obj.status && obj.id) {
+            const p = obj.percent != null ? ` ${obj.percent}%` : "";
+            appendProgressLog(`pull ${obj.id}: ${obj.status}${p}`);
+          } else if (obj.status) {
+            appendProgressLog(`pull: ${obj.status}`);
+          }
+        } else if (ev === "item_start") {
+          setProgressStage(obj.message || `更新 ${obj.name || ""}`);
+          appendProgressLog(`→ ${obj.message || obj.name || ""}`);
+        } else if (ev === "item_done") {
+          appendProgressLog(`${obj.ok ? "✓" : "✗"} ${obj.name || ""} ${obj.message || ""}`);
+        } else if (ev === "error") {
+          appendProgressLog(`[error] ${obj.message || ""}`);
+          setProgressStage(obj.message || "错误");
+        } else if (ev === "done") {
+          finalOk = !!obj.ok;
+          finalMsg = obj.message || (finalOk ? "完成" : "失败");
+          setProgressStage(finalMsg);
+          appendProgressLog(`=== ${finalMsg}`);
+          $("#progress-status").textContent = finalMsg;
+        } else {
+          appendProgressLog(JSON.stringify(obj));
+        }
+      }
+    }
+    if (finalOk == null) {
+      finalOk = true;
+      finalMsg = "流已结束";
+      $("#progress-status").textContent = finalMsg;
+    }
+  } catch (e) {
+    if (e.name === "AbortError") {
+      appendProgressLog("已取消跟随（引擎侧拉取可能仍在进行）");
+      $("#progress-status").textContent = "已取消跟随";
+    } else {
+      appendProgressLog(`[error] ${e.message || e}`);
+      setProgressStage(`失败：${e.message || e}`);
+      $("#progress-status").textContent = e.message || String(e);
+      alert(`更新失败：${e.message}`);
+    }
+  } finally {
+    progressState.abort = null;
+    const cancel = $("#progress-cancel");
+    if (cancel) {
+      cancel.disabled = true;
+      cancel.textContent = "已结束";
+    }
     try {
       await runDetectUpdates();
     } catch (_) {
       /* ignore */
     }
     loadAll();
-  } catch (e) {
-    alert(`更新失败：${e.message}`);
   }
+  return { ok: finalOk, message: finalMsg };
 }
 
 async function doRollback(id) {
@@ -2206,29 +2451,22 @@ async function runOneClickUpdate(ids) {
   const onlyRunning = !!$("#upd-only-running")?.checked;
   const n = ids ? ids.length : "全部可更新";
   if (!confirm(`一键安全更新 ${n} 个容器？\n将按管理源执行备份+拉取+重建（需接管才真正 recreate）。`)) return;
+  const body = {
+    only_available: true,
+    only_running: onlyRunning,
+  };
+  if (ids && ids.length) body.container_ids = ids;
   const prog = $("#update-progress");
   if (prog) {
     prog.hidden = false;
-    prog.textContent = "正在一键更新…";
+    prog.textContent = "进度见弹窗…";
   }
-  try {
-    const body = {
-      only_available: true,
-      only_running: onlyRunning,
-    };
-    if (ids && ids.length) body.container_ids = ids;
-    const r = await api("/api/ops/one-click-update", {
-      method: "POST",
-      body: JSON.stringify(body),
-    });
-    alert(r.message || "完成");
-    if (prog) prog.textContent = r.message || "完成";
-    await runDetectUpdates();
-    loadAll();
-  } catch (e) {
-    if (prog) prog.textContent = `更新失败：${e.message}`;
-    alert(e.message);
-  }
+  const r = await runUpdateStream(
+    "/api/ops/one-click-update/stream",
+    body,
+    `一键更新 · ${n}`
+  );
+  if (prog) prog.textContent = r?.message || "完成";
 }
 
 function selectedUpdateIds() {
@@ -2266,6 +2504,17 @@ $("#logs-tail")?.addEventListener("change", () => {
   if (state.logs.id) showLogs(state.logs.id, state.logs.name);
 });
 $("#detail-close")?.addEventListener("click", () => $("#detail-dialog").close());
+$("#image-detail-close")?.addEventListener("click", () => $("#image-detail-dialog")?.close());
+$("#progress-close")?.addEventListener("click", () => {
+  stopProgressStream();
+  $("#progress-dialog")?.close();
+});
+$("#progress-cancel")?.addEventListener("click", () => {
+  stopProgressStream();
+  $("#progress-status").textContent = "已取消跟随";
+  appendProgressLog("用户取消跟随");
+});
+$("#progress-dialog")?.addEventListener("close", () => stopProgressStream());
 $("#console-close")?.addEventListener("click", () => {
   closeConsole();
   $("#console-dialog").close();
@@ -2444,8 +2693,28 @@ $("#btn-image-prune").addEventListener("click", async () => {
   if (!requireLogin() || !requireTakeover("清理镜像")) return;
   if (!confirm("清理 dangling 镜像？")) return;
   try {
-    const r = await api("/api/images/prune", { method: "POST" });
+    const r = await api("/api/images/prune?dangling=true", { method: "POST" });
     alert(r.message || "完成");
+    loadResources("images");
+  } catch (e) {
+    alert(e.message);
+  }
+});
+
+$("#btn-image-prune-unused")?.addEventListener("click", async () => {
+  if (!requireLogin() || !requireTakeover("清理未使用镜像")) return;
+  if (
+    !confirm(
+      "清理所有未使用的镜像（含带 tag、未被任何容器引用）？\n此操作不可恢复，请确认无误。"
+    )
+  )
+    return;
+  try {
+    const r = await api("/api/images/prune?dangling=false", { method: "POST" });
+    const deleted = r.result?.images_deleted || r.images_deleted || [];
+    const n = Array.isArray(deleted) ? deleted.length : "";
+    const space = r.result?.space_reclaimed ?? r.space_reclaimed;
+    alert(r.message || `完成${n !== "" ? ` · 删除 ${n} 项` : ""}${space != null ? ` · 回收 ${fmtBytes(space)}` : ""}`);
     loadResources("images");
   } catch (e) {
     alert(e.message);

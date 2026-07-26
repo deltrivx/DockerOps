@@ -391,13 +391,25 @@ def one_click_update(
     only_available: bool = True,
     only_running: bool = False,
     actor: str | None = None,
+    on_progress=None,
 ) -> dict[str, Any]:
     """
     Detect then safe-update selected (or all available) containers.
     Uses existing manager-aware safe_update path.
+    on_progress: optional stage/pull callback for SSE.
     """
+    def _emit(payload: dict[str, Any]) -> None:
+        if not on_progress:
+            return
+        try:
+            on_progress(payload)
+        except Exception:
+            pass
+
+    _emit({"event": "stage", "stage": "detect", "message": "检测可更新项…"})
     detect = detect_updates(container_ids=container_ids, only_running=only_running, actor=actor)
     if not detect.get("ok"):
+        _emit({"event": "error", "message": detect.get("message") or "检测失败"})
         return detect
 
     targets = detect.get("available") if only_available else detect.get("items")
@@ -411,6 +423,8 @@ def one_click_update(
     results: list[dict[str, Any]] = []
     ok_n = 0
     fail_n = 0
+    total = len([t for t in targets if t.get("id") or t.get("name")])
+    idx = 0
 
     for t in targets:
         cid = t.get("id") or t.get("name")
@@ -418,8 +432,20 @@ def one_click_update(
             continue
         if only_available and not t.get("update_available"):
             continue
+        idx += 1
+        cname = t.get("name") or cid
+        _emit(
+            {
+                "event": "item_start",
+                "name": cname,
+                "id": cid,
+                "index": idx,
+                "total": total or idx,
+                "message": f"({idx}/{total or idx}) 更新 {cname}",
+            }
+        )
         try:
-            r = safe_update(cid, image=t.get("image"), actor=actor)
+            r = safe_update(cid, image=t.get("image"), actor=actor, on_progress=on_progress)
             success = bool(r.get("ok"))
             if success:
                 ok_n += 1
@@ -436,6 +462,15 @@ def one_click_update(
                     "result": r,
                 }
             )
+            _emit(
+                {
+                    "event": "item_done",
+                    "name": cname,
+                    "id": cid,
+                    "ok": success,
+                    "message": r.get("message") or ("成功" if success else "失败"),
+                }
+            )
         except Exception as e:
             fail_n += 1
             results.append(
@@ -446,6 +481,7 @@ def one_click_update(
                     "message": str(e),
                 }
             )
+            _emit({"event": "item_done", "name": cname, "id": cid, "ok": False, "message": str(e)})
 
     rec = add_ops_record(
         action="one_click_update",
@@ -455,6 +491,8 @@ def one_click_update(
         actor=actor,
     )
 
+    msg = f"一键更新完成：成功 {ok_n}，失败 {fail_n}"
+    _emit({"event": "done", "ok": fail_n == 0, "updated_ok": ok_n, "updated_failed": fail_n, "message": msg})
     return {
         "ok": fail_n == 0,
         "detect": {
@@ -466,7 +504,7 @@ def one_click_update(
         "updated_failed": fail_n,
         "results": results,
         "record": rec,
-        "message": f"一键更新完成：成功 {ok_n}，失败 {fail_n}",
+        "message": msg,
     }
 
 

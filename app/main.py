@@ -98,8 +98,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.1"
+VERSION = "0.5.2"
 CHANGELOG = [
+    {
+        "version": "0.5.2",
+        "date": "2026-07-26",
+        "items": [
+            "表格列宽重配：缩短镜像列、加宽操作列；桌面最多 3 个主按钮；检测结果列去空白",
+            "更新进度弹窗：SSE 阶段（备份/拉取层进度/重建/完成）+ 一键更新逐项进度",
+            "镜像页显示关联容器；一键清理未使用镜像；镜像详情弹窗",
+        ],
+    },
     {
         "version": "0.5.1",
         "date": "2026-07-26",
@@ -1200,6 +1209,64 @@ def api_update(container_id: str, body: UpdateBody, actor: AuthUser) -> dict[str
     return safe_update(container_id, image=body.image, actor=actor)
 
 
+@app.post("/api/ops/update/{container_id}/stream")
+def api_update_stream(container_id: str, body: UpdateBody, actor: AuthUser) -> StreamingResponse:
+    """SSE: stage + pull layer progress for a single container safe-update."""
+    import queue
+    import threading
+
+    q: queue.Queue = queue.Queue()
+
+    def on_progress(payload: dict[str, Any]) -> None:
+        q.put(payload)
+
+    def worker() -> None:
+        try:
+            result = safe_update(
+                container_id, image=body.image, actor=actor, on_progress=on_progress
+            )
+            q.put(
+                {
+                    "event": "done",
+                    "ok": bool(result.get("ok")),
+                    "message": result.get("message") or "",
+                    "result": {
+                        "ok": result.get("ok"),
+                        "manager": result.get("manager"),
+                        "partial": result.get("partial"),
+                    },
+                }
+            )
+        except Exception as e:
+            q.put({"event": "error", "message": str(e)})
+            q.put({"event": "done", "ok": False, "message": str(e)})
+        finally:
+            q.put(None)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        last_ping = time.time()
+        while True:
+            try:
+                item = q.get(timeout=1.0)
+            except queue.Empty:
+                if time.time() - last_ping > 12:
+                    yield ": ping\n\n"
+                    last_ping = time.time()
+                continue
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+            last_ping = time.time()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/api/ops/rollback/{container_id}")
 def api_rollback(container_id: str, actor: AuthUser) -> dict[str, Any]:
     return rollback_guide(container_id, actor=actor)
@@ -1259,6 +1326,57 @@ def api_one_click_update(body: OneClickUpdateBody, actor: AuthUser) -> dict[str,
         only_available=body.only_available,
         only_running=body.only_running,
         actor=actor,
+    )
+
+
+@app.post("/api/ops/one-click-update/stream")
+def api_one_click_update_stream(body: OneClickUpdateBody, actor: AuthUser) -> StreamingResponse:
+    """SSE: batch safe-update with per-item stage/pull progress."""
+    import queue
+    import threading
+
+    q: queue.Queue = queue.Queue()
+
+    def on_progress(payload: dict[str, Any]) -> None:
+        q.put(payload)
+
+    def worker() -> None:
+        try:
+            # one_click_update emits its own "done" via on_progress
+            one_click_update(
+                container_ids=body.container_ids,
+                only_available=body.only_available,
+                only_running=body.only_running,
+                actor=actor,
+                on_progress=on_progress,
+            )
+        except Exception as e:
+            q.put({"event": "error", "message": str(e)})
+            q.put({"event": "done", "ok": False, "message": str(e)})
+        finally:
+            q.put(None)
+
+    threading.Thread(target=worker, daemon=True).start()
+
+    def gen():
+        last_ping = time.time()
+        while True:
+            try:
+                item = q.get(timeout=1.0)
+            except queue.Empty:
+                if time.time() - last_ping > 12:
+                    yield ": ping\n\n"
+                    last_ping = time.time()
+                continue
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+            last_ping = time.time()
+
+    return StreamingResponse(
+        gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
     )
 
 

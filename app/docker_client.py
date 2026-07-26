@@ -332,13 +332,37 @@ def _parse_stats(stats: dict) -> dict[str, Any]:
     }
 
 
-def pull_image(image: str) -> dict[str, Any]:
+def pull_image_stream(image: str):
+    """
+    Yield docker pull progress chunks (decoded dicts from Engine API).
+    Caller may collect status lines or forward to SSE.
+    """
     c = get_client()
-    lines: list[str] = []
     for chunk in c.api.pull(image, stream=True, decode=True):
+        if isinstance(chunk, dict):
+            yield chunk
+        else:
+            yield {"status": str(chunk)}
+
+
+def pull_image(image: str, on_progress=None) -> dict[str, Any]:
+    """
+    Pull image; optionally call on_progress(chunk_dict) for each stream frame.
+    Returns {image, log_tail}.
+    """
+    lines: list[str] = []
+    for chunk in pull_image_stream(image):
+        if callable(on_progress):
+            try:
+                on_progress(chunk)
+            except Exception:
+                pass
         status = chunk.get("status") or ""
         if status:
             lines.append(status)
+        err = chunk.get("error") or chunk.get("errorDetail", {}).get("message")
+        if err:
+            raise RuntimeError(str(err))
     return {"image": image, "log_tail": lines[-20:]}
 
 
@@ -619,15 +643,32 @@ def _fmt_image_created(created: Any) -> str:
 
 def list_images() -> list[dict[str, Any]]:
     """
-    Portainer-like image list: short id, tags, size, created, dangling, used_by.
+    Portainer-like image list: short id, tags, size, created, dangling,
+    used_by count + used_by_containers [{id,name,state}].
     """
     c = get_client()
-    # Build image usage counts from containers (Image + ImageID)
-    usage: dict[str, int] = {}
+    # key -> list of container refs (dedupe by container id later)
+    usage: dict[str, list[dict[str, str]]] = {}
+
+    def _add_usage(key: str, ref: dict[str, str]) -> None:
+        if not key:
+            return
+        usage.setdefault(key, []).append(ref)
+        if key.startswith("sha256:"):
+            bare = key.replace("sha256:", "")
+            usage.setdefault(bare[:12], []).append(ref)
+            usage.setdefault(bare, []).append(ref)
+        elif len(key) >= 12 and "/" not in key and ":" not in key:
+            usage.setdefault(key[:12], []).append(ref)
+
     try:
         for cont in c.containers.list(all=True):
             attrs = cont.attrs or {}
             cfg = attrs.get("Config") or {}
+            state = (attrs.get("State") or {}).get("Status") or cont.status or ""
+            name = (cont.name or "").lstrip("/")
+            short_cid = (cont.short_id or cont.id or "")[:12]
+            ref = {"id": short_cid, "name": name, "state": state}
             tag0 = ""
             try:
                 if cont.image and cont.image.tags:
@@ -641,17 +682,24 @@ def list_images() -> list[dict[str, Any]]:
                     image_id = cont.image.id or ""
             except Exception:
                 pass
-            for key in (image_id, image_name):
-                if not key:
-                    continue
-                usage[key] = usage.get(key, 0) + 1
-                if key.startswith("sha256:"):
-                    bare = key.replace("sha256:", "")
-                    usage[bare[:12]] = usage.get(bare[:12], 0) + 1
-                elif len(key) >= 12 and "/" not in key and ":" not in key:
-                    usage[key[:12]] = usage.get(key[:12], 0) + 1
+            _add_usage(image_id, ref)
+            _add_usage(image_name, ref)
     except Exception:
         usage = {}
+
+    def _merge_refs(*keys: str) -> list[dict[str, str]]:
+        seen: set[str] = set()
+        out_refs: list[dict[str, str]] = []
+        for key in keys:
+            if not key:
+                continue
+            for ref in usage.get(key) or []:
+                rid = ref.get("id") or ref.get("name") or ""
+                if rid in seen:
+                    continue
+                seen.add(rid)
+                out_refs.append(ref)
+        return out_refs
 
     out: list[dict[str, Any]] = []
     for img in c.images.list():
@@ -660,14 +708,11 @@ def list_images() -> list[dict[str, Any]]:
         full_id = img.id or ""
         short = img.short_id.replace("sha256:", "") if img.short_id else (full_id.replace("sha256:", "")[:12] if full_id else "")
         dangling = not bool(tags)
-        used = 0
-        for key in [full_id, short, *tags]:
-            if key and key in usage:
-                used = max(used, usage[key])
-        # also match short of full_id
+        keys = [full_id, short, *tags]
         if full_id.startswith("sha256:"):
             bare = full_id[7:]
-            used = max(used, usage.get(bare[:12], 0), usage.get(bare, 0))
+            keys.extend([bare, bare[:12]])
+        used_list = _merge_refs(*keys)
         created_raw = attrs.get("Created")
         out.append(
             {
@@ -679,7 +724,8 @@ def list_images() -> list[dict[str, Any]]:
                 "created": created_raw,
                 "created_fmt": _fmt_image_created(created_raw),
                 "dangling": dangling,
-                "used_by": int(used),
+                "used_by": len(used_list),
+                "used_by_containers": used_list,
             }
         )
     out.sort(key=lambda x: (0 if not x.get("dangling") else 1, x.get("label") or ""))

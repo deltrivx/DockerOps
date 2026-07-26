@@ -164,12 +164,22 @@ def backup_project(name: str, actor: str | None = None) -> dict[str, Any]:
     }
 
 
+def _emit_progress(on_progress, payload: dict[str, Any]) -> None:
+    if not on_progress:
+        return
+    try:
+        on_progress(payload)
+    except Exception:
+        pass
+
+
 def safe_update_project(
     name: str,
     actor: str | None = None,
     *,
     service: str | None = None,
     recreate: bool = True,
+    on_progress=None,
 ) -> dict[str, Any]:
     """Backup + compose pull + compose up (takeover required for up/recreate)."""
     settings = get_settings()
@@ -184,10 +194,13 @@ def safe_update_project(
         )
         return {"ok": False, "record": rec, "message": f"未找到 Compose 项目：{name}"}
 
+    _emit_progress(on_progress, {"event": "stage", "stage": "backup", "message": f"备份 Compose 项目 {name}", "container": name})
     backup = backup_project(name, actor=actor)
     if not backup.get("ok"):
+        _emit_progress(on_progress, {"event": "error", "message": "备份失败", "container": name})
         return {"ok": False, "message": "备份失败，已中止更新", "backup": backup}
 
+    _emit_progress(on_progress, {"event": "stage", "stage": "pull", "message": f"compose pull {name}", "container": name})
     pull = _run_compose(project, ["pull"] + ([service] if service else []), actor=actor)
     if not pull.get("ok"):
         rec = add_ops_record(
@@ -197,6 +210,7 @@ def safe_update_project(
             detail={"step": "pull", "pull": pull, "backup": backup.get("backup_path")},
             actor=actor,
         )
+        _emit_progress(on_progress, {"event": "error", "message": "compose pull 失败", "container": name})
         return {"ok": False, "record": rec, "backup": backup, "pull": pull, "message": "compose pull 失败"}
 
     # up / recreate requires takeover
@@ -220,15 +234,18 @@ def safe_update_project(
             },
             actor=actor,
         )
+        msg = "已备份并拉取镜像；接管未开启，未执行 compose up（原系统仍可接管）。"
+        _emit_progress(on_progress, {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True})
         return {
             "ok": True,
             "partial": True,
             "record": rec,
             "backup": backup,
             "pull": pull,
-            "message": "已备份并拉取镜像；接管未开启，未执行 compose up（原系统仍可接管）。",
+            "message": msg,
         }
 
+    _emit_progress(on_progress, {"event": "stage", "stage": "recreate", "message": f"compose up {name}", "container": name})
     up_args = ["up", "-d"]
     if recreate:
         up_args.append("--force-recreate")
@@ -248,13 +265,24 @@ def safe_update_project(
         },
         actor=actor,
     )
+    msg = f"Compose 项目 {name} 安全更新完成" if up.get("ok") else f"compose up 失败：{up.get('stderr')}"
+    _emit_progress(
+        on_progress,
+        {
+            "event": "stage",
+            "stage": "done" if up.get("ok") else "error",
+            "message": msg,
+            "container": name,
+            "ok": bool(up.get("ok")),
+        },
+    )
     return {
         "ok": bool(up.get("ok")),
         "record": rec,
         "backup": backup,
         "pull": pull,
         "up": up,
-        "message": f"Compose 项目 {name} 安全更新完成" if up.get("ok") else f"compose up 失败：{up.get('stderr')}",
+        "message": msg,
     }
 
 
