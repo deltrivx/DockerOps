@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.5.4",
+  version: "0.5.5",
   tab: "overview",
   /** Live log stream controller */
   logs: {
@@ -73,6 +73,48 @@ const TAB_TITLES = {
   docs: ["说明日志", "使用说明 · 版本更新日志"],
   settings: ["系统设置", "代理 · 自动更新 · 个性化"],
 };
+
+const TAB_KEYS = Object.keys(TAB_TITLES);
+const TAB_STORAGE_KEY = "dockerops_tab";
+
+/** Resolve last tab: URL hash > localStorage > overview */
+function readSavedTab() {
+  try {
+    const hash = (location.hash || "").replace(/^#\/?/, "").trim();
+    if (hash && TAB_KEYS.includes(hash)) return hash;
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    const saved = localStorage.getItem(TAB_STORAGE_KEY) || "";
+    if (saved && TAB_KEYS.includes(saved)) return saved;
+  } catch (_) {
+    /* ignore */
+  }
+  return "overview";
+}
+
+function persistTab(name) {
+  if (!name || !TAB_KEYS.includes(name)) return;
+  try {
+    localStorage.setItem(TAB_STORAGE_KEY, name);
+  } catch (_) {
+    /* ignore */
+  }
+  try {
+    const want = `#${name}`;
+    if (location.hash !== want) {
+      // replaceState keeps history clean; hash still works for share/bookmark
+      history.replaceState(null, "", want);
+    }
+  } catch (_) {
+    try {
+      location.hash = name;
+    } catch (__) {
+      /* ignore */
+    }
+  }
+}
 
 const $ = (sel) => document.querySelector(sel);
 
@@ -552,12 +594,14 @@ function updateComposeNavVisibility() {
   }
 }
 
-function switchTab(name) {
+function switchTab(name, opts = {}) {
   // guard: cannot open compose when hidden
   if (name === "compose" && !(state.compose && state.compose.length)) {
     name = "overview";
   }
+  if (!TAB_KEYS.includes(name)) name = "overview";
   state.tab = name;
+  if (!opts.skipPersist) persistTab(name);
   document.querySelectorAll("#main-tabs .nav-item").forEach((t) => {
     t.classList.toggle("active", t.dataset.tab === name);
   });
@@ -1060,8 +1104,15 @@ async function loadActivityDeferred(seq) {
   }
 }
 
-async function loadAll() {
+/**
+ * Load console data.
+ * Portainer-like: with a stored token, boot quietly in background — never flash
+ * a full-page "加载控制台" gate. Only show banner for explicit user refresh
+ * when opts.banner is true (default false when session already known).
+ */
+async function loadAll(opts = {}) {
   const seq = ++state.loadSeq;
+  const showBanner = opts.banner === true;
   setAuthUI();
   try {
     await checkSetup();
@@ -1074,7 +1125,10 @@ async function loadAll() {
       setLoading(false);
       return; // forced login — wait for credentials
     }
-    setLoading(true, "校验会话…");
+    // Quiet path when we already have a token (normal page open / soft refresh)
+    if (showBanner) setLoading(true, "刷新数据…");
+    else setLoading(false);
+
     const okSession = await validateSession();
     if (seq !== state.loadSeq) return;
     if (!okSession) {
@@ -1082,7 +1136,6 @@ async function loadAll() {
       return;
     }
 
-    setLoading(true, "加载控制台…");
     // Fast path only — never wait on container stats (activity is deferred)
     const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, sysPack, updStatus] =
       await Promise.all([
@@ -2593,7 +2646,13 @@ document.querySelectorAll("#main-tabs .nav-item").forEach((btn) => {
   btn.addEventListener("click", () => switchTab(btn.dataset.tab));
 });
 
-$("#btn-refresh").addEventListener("click", loadAll);
+// browser back/forward / shared #tab links
+window.addEventListener("hashchange", () => {
+  const t = readSavedTab();
+  if (t && t !== state.tab) switchTab(t, { skipPersist: true });
+});
+
+$("#btn-refresh").addEventListener("click", () => loadAll({ banner: true }));
 $("#logs-close").addEventListener("click", () => {
   stopLogStream();
   $("#logs-dialog").close();
@@ -3045,14 +3104,15 @@ $("#login-form").addEventListener("submit", async (e) => {
   }
 });
 
-// initial — auth gate first, then console data
+// initial — restore last tab, then load quietly if session exists
 setSidebarOpen(false); // ensure mobile backdrop never blocks first paint
 applyPrefsLocal(state.prefs);
 if (window.DockerOpsParticles) {
   window.DockerOpsParticles.applyPrefs(state.prefs);
 }
 updateComposeNavVisibility();
-switchTab("overview");
+// Stay on current page after refresh (hash / localStorage), not force overview
+switchTab(readSavedTab());
 // Open gate immediately if we already know session is empty (before network)
 if (!state.token) {
   // status will refine setup vs login

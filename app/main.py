@@ -98,8 +98,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.4"
+VERSION = "0.5.5"
 CHANGELOG = [
+    {
+        "version": "0.5.5",
+        "date": "2026-07-26",
+        "items": [
+            "刷新/重开保持当前页签（hash + localStorage），不再跳回总览",
+            "有会话时静默后台加载控制台，不再闪「加载控制台」门闩",
+            "移动端顶栏与操作按钮对齐；窄屏操作列加宽",
+        ],
+    },
     {
         "version": "0.5.4",
         "date": "2026-07-26",

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DockerOps</Name>
-  <Repository>ghcr.io/deltrivx/dockerops:0.5.4</Repository>
+  <Repository>ghcr.io/deltrivx/dockerops:0.5.5</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.5.4 — 操作按宽度自动外露；表格去空洞。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.5.5 — 页签记忆/静默加载/移动端对齐。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>
