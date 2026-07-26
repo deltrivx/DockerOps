@@ -119,8 +119,15 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 CHANGELOG = [
+    {
+        "version": "0.6.1",
+        "date": "2026-07-27",
+        "items": [
+            "修复启动死锁：init_db 在持有 SQLite 锁时调用 ensure_default_endpoint 导致 uvicorn 永不监听",
+        ],
+    },
     {
         "version": "0.6.0",
         "date": "2026-07-27",

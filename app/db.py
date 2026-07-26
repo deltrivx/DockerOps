@@ -113,11 +113,11 @@ def init_db() -> None:
             conn.commit()
         finally:
             conn.close()
-        # Seed default endpoint from env after table exists
-        try:
-            ensure_default_endpoint()
-        except Exception:
-            pass
+    # Seed default endpoint after releasing _lock (ensure_default also takes _lock).
+    try:
+        ensure_default_endpoint()
+    except Exception:
+        pass
 
 
 def add_ops_record(
