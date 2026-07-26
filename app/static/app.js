@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.7",
+  version: "0.4.8",
   tab: "overview",
   needsSetup: false,
   usernames: [],
@@ -1197,8 +1197,22 @@ function splitImageRef(tag) {
 
 function fmtImageCreated(created) {
   if (!created) return "—";
-  const d = new Date(created);
-  if (Number.isNaN(d.getTime())) return String(created).slice(0, 16);
+  const s = String(created).trim();
+  // Docker may return nanosecond ISO: 2026-05-28T07:49:24.130421496Z — browsers reject >3 fractional digits
+  const normalized = s
+    .replace(/(\.\d{3})\d+/, "$1")
+    .replace(/([+-]\d{2}:\d{2})$/, (m) => m)
+    .replace(/\+08:00$/, "Z"); // keep parseable; display uses local via Date
+  let d = new Date(normalized);
+  if (Number.isNaN(d.getTime())) {
+    // strip fractional seconds entirely
+    d = new Date(s.replace(/\.\d+/, ""));
+  }
+  if (Number.isNaN(d.getTime())) {
+    // last resort: YYYY-MM-DD HH:MM from string
+    const m = s.match(/(\d{4}-\d{2}-\d{2})[T\s](\d{2}:\d{2})/);
+    return m ? `${m[1]} ${m[2]}` : s.slice(0, 16);
+  }
   const pad = (n) => String(n).padStart(2, "0");
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
@@ -1261,11 +1275,15 @@ function renderImages() {
       <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
+    // Only two actions — show both inline (no 更多); keeps row height stable
     fillActionGroup(
       actions,
-      [{ label: "历史", fn: () => showImageHistory(ref) }],
-      [{ label: "删除", fn: () => doImageRemove(ref), danger: true, disabled: !state.takeover }],
-      { maxPrimary: 1 }
+      [
+        { label: "历史", fn: () => showImageHistory(ref) },
+        { label: "删除", fn: () => doImageRemove(ref), danger: true, disabled: !state.takeover },
+      ],
+      [],
+      { maxPrimary: 2 }
     );
     body.appendChild(tr);
   });

@@ -540,32 +540,41 @@ a { color: var(--cyan); }
   max-width: 100%;
   width: 100%;
 }
-/* Resource tables: fixed layout with explicit colgroup; no forced 100% min-width bloat */
-table.data-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.86rem;
-  table-layout: fixed;
-}
+/* Tables must stay real tables — never set display:flex/grid on td/th/tr */
 table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.86rem;
+  table-layout: auto;
+}
+table.data-table {
+  width: 100%;
   table-layout: fixed;
+  font-size: 0.86rem;
 }
 th, td {
+  display: table-cell; /* override any accidental flex on utility classes */
   text-align: left;
-  padding: 0.48rem 0.45rem;
+  padding: 0.5rem 0.55rem;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
+  box-sizing: border-box;
 }
-/* Flexible text columns: ellipsis, never wrap into multi-line walls */
-td.cell-text,
-th.cell-text {
+/* Text columns: single-line ellipsis on the cell itself */
+table.data-table th,
+table.data-table td {
   overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+table.data-table td.cell-text,
+table.data-table th.cell-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   min-width: 0;
 }
-/* Global mono uses pre-wrap for logs; table cells must stay single-line */
+/* Global .mono uses pre-wrap for logs — force single-line inside tables */
 table .mono,
 td.mono,
 th.mono,
@@ -581,44 +590,47 @@ td .mono {
   text-overflow: ellipsis;
   white-space: nowrap !important;
   max-width: 100%;
-  display: block;
   min-width: 0;
+  /* inline-block keeps ellipsis working without breaking table-cell layout */
+  display: inline-block;
+  vertical-align: bottom;
+  max-width: 100%;
 }
-/* Compact fixed columns — tight to content, avoid large trailing blanks */
+/* Fixed-ish columns via colgroup % / rem — keep content tight */
 td.col-check,
-th.col-check { width: 2rem; text-align: center; padding-left: 0.35rem; padding-right: 0.2rem; }
+th.col-check { width: 2.25rem; text-align: center; padding-left: 0.4rem; padding-right: 0.25rem; overflow: visible; }
 td.col-status,
-th.col-status { width: 5rem; white-space: nowrap; }
+th.col-status { width: 5.25rem; }
 td.col-health,
-th.col-health { width: 4.5rem; white-space: nowrap; }
+th.col-health { width: 4.75rem; }
 td.col-num,
-th.col-num { width: 3rem; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+th.col-num { width: 3.25rem; font-variant-numeric: tabular-nums; text-align: right; }
 td.col-size,
-th.col-size { width: 4.8rem; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+th.col-size { width: 5.25rem; font-variant-numeric: tabular-nums; text-align: right; }
 td.col-date,
-th.col-date { width: 7.2rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+th.col-date { width: 8rem; font-variant-numeric: tabular-nums; }
 td.col-used,
-th.col-used { width: 3.2rem; white-space: nowrap; text-align: center; }
+th.col-used { width: 3.5rem; text-align: center; }
 td.col-id,
-th.col-id { width: 5.8rem; white-space: nowrap; }
+th.col-id { width: 6.25rem; }
 td.col-mgr,
-th.col-mgr { width: 5.6rem; white-space: nowrap; }
+th.col-mgr { width: 6rem; }
 td.col-run,
-th.col-run { width: 4rem; white-space: nowrap; text-align: center; }
-/* Actions: fixed narrow strip, never wraps / never clips menus */
+th.col-run { width: 4.25rem; text-align: center; }
+/* Actions: stay table-cell; flex only on inner .action-group */
 td.col-actions,
-th.col-actions {
-  width: 8.75rem;
+th.col-actions,
+td.actions {
+  display: table-cell !important; /* CRITICAL: never flex the <td> */
+  width: 9rem;
   overflow: visible !important;
-  vertical-align: middle;
-  white-space: nowrap;
+  white-space: nowrap !important;
   text-align: right;
-  padding-right: 0.55rem;
+  vertical-align: middle;
+  padding-right: 0.6rem;
 }
 .tag-list {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
+  display: block;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
@@ -640,23 +652,31 @@ th.col-actions {
   white-space: nowrap;
 }
 .img-name-cell {
+  display: block;
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
 }
 .img-name-cell .img-repo {
+  display: block;
   font-weight: 600;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .img-name-cell .img-tag {
+  display: block;
   color: var(--cyan);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.8rem;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.img-name-cell .tag-more {
+  display: block;
+  font-size: 0.72rem;
+  color: var(--muted);
 }
 .badge-dangling {
   display: inline-block;
@@ -821,16 +841,14 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
 .pill.update-no { color: var(--ok); border-color: rgba(34, 197, 94, 0.35); }
 .pill.update-err { color: var(--warn); border-color: rgba(245, 158, 11, 0.4); }
 
-.actions {
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 0.22rem;
-  min-width: 0;
-  width: 100%;
+/* NEVER put display:flex on td.actions — that collapses table rows (vertical text).
+   Flex only on the inner .action-group wrapper. */
+td.actions,
+td.col-actions {
+  display: table-cell !important;
 }
-.actions .btn.small {
+.actions .btn.small,
+.action-group .btn.small {
   flex: 0 0 auto;
   white-space: nowrap;
   padding: 0.2rem 0.42rem;
@@ -845,6 +863,7 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
   position: relative;
   flex-wrap: nowrap;
   max-width: 100%;
+  vertical-align: middle;
 }
 .action-menu {
   position: relative;
@@ -895,26 +914,38 @@ tbody tr:nth-last-child(-n+3) .action-menu-panel {
 .action-menu-panel .btn.danger {
   margin-top: 0.12rem;
 }
-/* Per-table action width (1 primary + 更多 ≈ 8.5–9rem) */
+/* Per-table action width */
+table.images-table col.col-actions,
 table.images-table th.col-actions,
-table.images-table td.col-actions { width: 7.5rem; }
+table.images-table td.col-actions { width: 8rem; }
+table.containers-table col.col-actions,
 table.containers-table th.col-actions,
-table.containers-table td.col-actions { width: 8.75rem; }
+table.containers-table td.col-actions { width: 9rem; }
+table.updates-table col.col-actions,
 table.updates-table th.col-actions,
-table.updates-table td.col-actions { width: 7.5rem; }
+table.updates-table td.col-actions { width: 8rem; }
+table.compose-table col.col-actions,
 table.compose-table th.col-actions,
 table.compose-table td.col-actions,
+table.unraid-table col.col-actions,
 table.unraid-table th.col-actions,
 table.unraid-table td.col-actions,
+table.networks-table col.col-actions,
 table.networks-table th.col-actions,
 table.networks-table td.col-actions,
+table.volumes-table col.col-actions,
 table.volumes-table th.col-actions,
 table.volumes-table td.col-actions { width: 8.5rem; }
-/* Name cell: badge + id stay on one visual block without blowing width */
-td.cell-text strong.cell-clip {
-  display: inline-block;
-  max-width: 100%;
-  vertical-align: bottom;
+/* Images: name column takes remaining space */
+table.images-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 640px;
+}
+table.containers-table {
+  table-layout: fixed;
+  width: 100%;
+  min-width: 760px;
 }
 td.cell-text .pill {
   vertical-align: middle;

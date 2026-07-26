@@ -83,8 +83,16 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.7"
+VERSION = "0.4.8"
 CHANGELOG = [
+    {
+        "version": "0.4.8",
+        "date": "2026-07-26",
+        "items": [
+            "修复镜像/资源表严重错位：禁止对 td.actions 使用 display:flex（会破坏表格导致名称竖排）",
+            "操作列保持 table-cell，仅内部 action-group 用 flex；修复创建时间纳秒 ISO 解析",
+        ],
+    },
     {
         "version": "0.4.7",
         "date": "2026-07-26",
