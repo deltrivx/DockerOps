@@ -98,8 +98,16 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.0"
+VERSION = "0.5.1"
 CHANGELOG = [
+    {
+        "version": "0.5.1",
+        "date": "2026-07-26",
+        "items": [
+            "修复 Web 终端：exec_resize 须在 exec_start 之后，避免握手阻塞超时",
+            "终端建立路径改为线程池执行 docker 调用，避免卡住事件循环",
+        ],
+    },
     {
         "version": "0.5.0",
         "date": "2026-07-26",
@@ -988,22 +996,25 @@ async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
 
     cmd = resolve_shell_cmd(shell)
     sock = None
+    raw = None
     exec_id = None
     idle_sec = 30 * 60
     last_activity = time.time()
+    loop = asyncio.get_event_loop()
 
     try:
-        created = exec_create(container_id, cmd=cmd, tty=True, stdin=True)
+        # Keep event loop free: docker-py calls are blocking (and resize-before-start
+        # can hang until Docker times out the exec session).
+        created = await loop.run_in_executor(
+            None, lambda: exec_create(container_id, cmd=cmd, tty=True, stdin=True)
+        )
         exec_id = created.get("Id")
         if not exec_id:
             await websocket.send_text("\r\n[error] exec_create 失败\r\n")
             await websocket.close(code=1011)
             return
-        try:
-            exec_resize(exec_id, height=rows, width=cols)
-        except Exception:
-            pass
-        sock, raw = exec_start_socket(exec_id)
+
+        sock, raw = await loop.run_in_executor(None, lambda: exec_start_socket(exec_id))
         # Prefer short timeouts over non-blocking to avoid platform-specific BlockingIOError loops
         if hasattr(raw, "settimeout"):
             try:
@@ -1016,13 +1027,28 @@ async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
             except Exception:
                 pass
 
-        audit(
-            "console_open",
-            actor=actor,
-            detail={"container": container_id, "shell": shell, "cmd": cmd, "cols": cols, "rows": rows},
-        )
+        # Resize only works after the exec session has started.
+        try:
+            await loop.run_in_executor(
+                None, lambda: exec_resize(exec_id, height=rows, width=cols)
+            )
+        except Exception:
+            pass
 
-        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None,
+            lambda: audit(
+                "console_open",
+                actor=actor,
+                detail={
+                    "container": container_id,
+                    "shell": shell,
+                    "cmd": cmd,
+                    "cols": cols,
+                    "rows": rows,
+                },
+            ),
+        )
 
         async def pump_docker_to_ws() -> None:
             nonlocal last_activity
@@ -1105,14 +1131,27 @@ async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
         except Exception:
             pass
     finally:
-        audit(
-            "console_close",
-            actor=actor or "unknown",
-            detail={"container": container_id, "shell": shell, "exec_id": (exec_id or "")[:24]},
-        )
+        try:
+            await loop.run_in_executor(
+                None,
+                lambda: audit(
+                    "console_close",
+                    actor=actor or "unknown",
+                    detail={"container": container_id, "shell": shell, "exec_id": (exec_id or "")[:24]},
+                ),
+            )
+        except Exception:
+            pass
         try:
             if sock is not None:
                 closer = getattr(sock, "close", None)
+                if callable(closer):
+                    closer()
+        except Exception:
+            pass
+        try:
+            if raw is not None and raw is not sock:
+                closer = getattr(raw, "close", None)
                 if callable(closer):
                     closer()
         except Exception:
