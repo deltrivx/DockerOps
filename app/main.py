@@ -98,8 +98,16 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.7"
+VERSION = "0.5.8"
 CHANGELOG = [
+    {
+        "version": "0.5.8",
+        "date": "2026-07-27",
+        "items": [
+            "状态列不再裁字：pill（running 等）保证最小宽度与 overflow 可见",
+            "Unraid/容器等表移动端状态与操作列地板加宽，超出仍横滑",
+        ],
+    },
     {
         "version": "0.5.7",
         "date": "2026-07-27",

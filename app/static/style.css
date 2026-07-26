@@ -589,7 +589,13 @@ td.col-check, th.col-check {
   overflow: visible;
   max-width: none;
 }
-td.col-status, th.col-status { width: 7%; }
+td.col-status, th.col-status {
+  width: 7%;
+  min-width: 5.75rem; /* fits "running" / "restarting" pill */
+  max-width: none !important;
+  overflow: visible !important;
+  white-space: nowrap !important;
+}
 td.col-health, th.col-health { width: 6%; }
 td.col-num, th.col-num { width: 5%; text-align: right; font-variant-numeric: tabular-nums; }
 td.col-size, th.col-size { width: 8%; text-align: right; font-variant-numeric: tabular-nums; }
@@ -867,6 +873,10 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
   border-radius: 999px;
   font-size: 0.75rem;
   border: 1px solid var(--border);
+  white-space: nowrap;
+  max-width: none;
+  flex-shrink: 0;
+  vertical-align: middle;
 }
 .pill.running, .pill.healthy { color: var(--ok); border-color: rgba(34, 197, 94, 0.35); }
 .pill.exited, .pill.unhealthy, .pill.dead { color: var(--bad); border-color: rgba(239, 68, 68, 0.35); }
@@ -1707,7 +1717,11 @@ body.auth-locked .shell {
   table.containers-table th.cell-text:nth-child(2),
   table.containers-table td.cell-text:nth-child(2) { width: 7.5rem !important; min-width: 7rem; }
   table.containers-table th.col-status,
-  table.containers-table td.col-status { width: 5.5rem !important; min-width: 5rem; }
+  table.containers-table td.col-status {
+    width: 6rem !important;
+    min-width: 5.75rem !important;
+    overflow: visible !important;
+  }
   table.containers-table th.col-actions,
   table.containers-table td.col-actions {
     width: 8.5rem !important;
@@ -1730,14 +1744,45 @@ body.auth-locked .shell {
   table.updates-table th.col-actions,
   table.updates-table td.col-actions { min-width: 8rem; }
 
+  /* Unraid: name + network + status + ops (repo col hidden) — status must fit "running" */
+  table.unraid-table col:nth-child(1) { width: 28% !important; }
+  table.unraid-table col:nth-child(3) { width: 16% !important; }
+  table.unraid-table col:nth-child(4) { width: 18% !important; }
+  table.unraid-table col:nth-child(5) { width: 38% !important; }
+  table.unraid-table th.cell-text:nth-child(1),
+  table.unraid-table td.cell-text:nth-child(1) { min-width: 7rem; }
+  /* network (3rd) slightly tighter; status (4th) room for pill */
+  table.unraid-table th.col-status:nth-child(3),
+  table.unraid-table td.col-status:nth-child(3) {
+    min-width: 4rem !important;
+    overflow: visible !important;
+  }
+  table.unraid-table th.col-status:nth-child(4),
+  table.unraid-table td.col-status:nth-child(4) {
+    min-width: 5.75rem !important;
+    width: auto !important;
+    overflow: visible !important;
+  }
+  table.unraid-table th.col-actions,
+  table.unraid-table td.col-actions { min-width: 9.5rem; }
+  table.compose-table th.col-actions,
+  table.compose-table td.col-actions { min-width: 8rem; }
+  table.networks-table th.col-actions,
+  table.networks-table td.col-actions,
+  table.volumes-table th.col-actions,
+  table.volumes-table td.col-actions { min-width: 6rem; }
+
   table.containers-table,
   table.images-table,
   table.updates-table {
-    min-width: 480px;
-    width: max(100%, 480px);
+    min-width: 500px;
+    width: max(100%, 500px);
+  }
+  table.unraid-table {
+    min-width: 460px;
+    width: max(100%, 460px);
   }
   table.compose-table,
-  table.unraid-table,
   table.networks-table,
   table.volumes-table {
     min-width: 360px;
@@ -1784,16 +1829,20 @@ body.auth-locked .shell {
     align-items: center;
     justify-content: center;
   }
-  /* Narrow phone: slightly tighter floors; still scroll, never crush ops */
+  /* Narrow phone: still scroll; never clip status pill or ops */
   table.containers-table,
   table.images-table,
   table.updates-table {
-    min-width: 420px;
-    width: max(100%, 420px);
+    min-width: 460px;
+    width: max(100%, 460px);
+  }
+  table.unraid-table {
+    min-width: 440px;
+    width: max(100%, 440px);
   }
   table.containers-table col:nth-child(1) { width: 2.25rem !important; }
   table.containers-table col:nth-child(2) { width: 6.5rem !important; }
-  table.containers-table col:nth-child(5) { width: 5rem !important; }
+  table.containers-table col:nth-child(5) { width: 5.75rem !important; }
   table.containers-table col:nth-child(8) { width: 8rem !important; }
   table.containers-table th.col-check,
   table.containers-table td.col-check { width: 2.25rem !important; min-width: 2.25rem; }
@@ -1804,9 +1853,10 @@ body.auth-locked .shell {
   }
   table.containers-table th.col-status,
   table.containers-table td.col-status {
-    width: 5rem !important;
-    min-width: 4.75rem;
-    max-width: none;
+    width: 5.75rem !important;
+    min-width: 5.75rem !important;
+    max-width: none !important;
+    overflow: visible !important;
     padding-left: 0.2rem;
     padding-right: 0.2rem;
   }
@@ -1814,6 +1864,11 @@ body.auth-locked .shell {
   table.containers-table td.col-actions {
     width: 8rem !important;
     min-width: 7.75rem;
+  }
+  table.unraid-table th.col-status,
+  table.unraid-table td.col-status {
+    min-width: 5.75rem !important;
+    overflow: visible !important;
   }
   table.containers-table th.cell-text:nth-child(2),
   table.containers-table td.cell-text:nth-child(2) {
