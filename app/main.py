@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import time
 from pathlib import Path
 from typing import Any
@@ -28,7 +29,12 @@ from compose_mgr import (
     project_up,
     safe_update_project,
 )
-from config import get_settings
+from config import (
+    apply_proxy_to_environ,
+    env_proxy_locked,
+    get_settings,
+    read_process_proxy,
+)
 from db import audit, init_db
 from docker_client import get_container, list_containers, ping, refresh_template_name_cache
 from docker_resources import (
@@ -67,11 +73,27 @@ from unraid_mgr import (
     safe_update_unraid,
     templates_available,
 )
-from update_detect import detect_updates, one_click_update
+from update_detect import (
+    detect_updates,
+    get_cached_update_status,
+    get_update_auto_settings,
+    one_click_update,
+    set_update_auto_settings,
+    start_update_auto_check_thread,
+)
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.4"
+VERSION = "0.4.5"
 CHANGELOG = [
+    {
+        "version": "0.4.5",
+        "date": "2026-07-26",
+        "items": [
+            "更新检测对齐 Unraid：后台自动扫描 + 状态缓存，容器列表/总览直接显示可更新徽标",
+            "镜像页对齐 Portainer：标签/ID/占用/多选；修复长镜像名导致页面向右错位",
+            "系统设置：代理配置（环境变量优先自动识别锁定，或 Web 保存到 SQLite）",
+        ],
+    },
     {
         "version": "0.4.4",
         "date": "2026-07-26",
@@ -253,6 +275,78 @@ class PrefsBody(BaseModel):
     reduce_motion: bool | None = None
 
 
+class SystemSettingsBody(BaseModel):
+    """Proxy + auto-update settings (not visual prefs)."""
+    http_proxy: str | None = None
+    https_proxy: str | None = None
+    no_proxy: str | None = None
+    auto_check_enabled: bool | None = None
+    auto_check_interval_hours: int | None = Field(default=None, ge=1, le=48)
+
+
+META_SYSTEM_PROXY = "system_proxy"
+
+
+def _load_stored_proxy() -> dict[str, str]:
+    raw = get_meta(META_SYSTEM_PROXY)
+    if not raw:
+        return {"http": "", "https": "", "no_proxy": ""}
+    try:
+        data = json.loads(raw)
+        if not isinstance(data, dict):
+            return {"http": "", "https": "", "no_proxy": ""}
+        return {
+            "http": str(data.get("http") or ""),
+            "https": str(data.get("https") or ""),
+            "no_proxy": str(data.get("no_proxy") or ""),
+        }
+    except Exception:
+        return {"http": "", "https": "", "no_proxy": ""}
+
+
+def _resolve_proxy_view() -> dict[str, Any]:
+    """Env wins over stored; expose source for UI lock."""
+    locked = env_proxy_locked()
+    env_p = read_process_proxy()
+    stored = _load_stored_proxy()
+    if locked:
+        return {
+            "http": env_p.get("http") or "",
+            "https": env_p.get("https") or "",
+            "no_proxy": env_p.get("no_proxy") or "",
+            "source": "env",
+            "env_locked": True,
+        }
+    if any(stored.values()):
+        return {
+            "http": stored.get("http") or "",
+            "https": stored.get("https") or "",
+            "no_proxy": stored.get("no_proxy") or "",
+            "source": "stored",
+            "env_locked": False,
+        }
+    return {
+        "http": "",
+        "https": "",
+        "no_proxy": "",
+        "source": "none",
+        "env_locked": False,
+    }
+
+
+def _apply_stored_proxy_at_startup() -> None:
+    """If no env proxy, re-apply SQLite proxy into process env after restart."""
+    if env_proxy_locked():
+        return
+    stored = _load_stored_proxy()
+    if any(stored.values()):
+        apply_proxy_to_environ(
+            http=stored.get("http") or "",
+            https=stored.get("https") or "",
+            no_proxy=stored.get("no_proxy") or "",
+        )
+
+
 def _takeover_or_403() -> None:
     try:
         get_settings().takeover_guard()
@@ -279,6 +373,10 @@ def _startup() -> None:
     settings.ensure_dirs()
     refresh_template_name_cache()
     boot = bootstrap_from_env()
+    try:
+        _apply_stored_proxy_at_startup()
+    except Exception:
+        pass
     plat = {}
     try:
         plat = platform_info()
@@ -295,8 +393,14 @@ def _startup() -> None:
             "unraid_templates": templates_available(),
             "bootstrap": boot,
             "needs_setup": auth_status().get("needs_setup"),
+            "update_auto": get_update_auto_settings(),
+            "proxy_source": _resolve_proxy_view().get("source"),
         },
     )
+    try:
+        start_update_auto_check_thread()
+    except Exception:
+        pass
 
 
 @app.get("/api/health")
@@ -792,11 +896,12 @@ class OneClickUpdateBody(BaseModel):
 
 @app.post("/api/ops/detect-updates")
 def api_detect_updates(body: DetectBody, actor: AuthUser) -> dict[str, Any]:
-    """一键检测：比对本地与仓库镜像 digest，发现可更新容器。"""
+    """强制检测：比对本地与仓库镜像 digest，并写入状态缓存。"""
     return detect_updates(
         container_ids=body.container_ids,
         only_running=body.only_running,
         actor=actor,
+        persist=True,
     )
 
 
@@ -805,7 +910,23 @@ def api_detect_updates_get(
     only_running: bool = False,
     actor: AuthUser = ...,
 ) -> dict[str, Any]:
-    return detect_updates(only_running=only_running, actor=actor)
+    return detect_updates(only_running=only_running, actor=actor, persist=True)
+
+
+@app.get("/api/ops/update-status")
+def api_update_status(actor: OptionalUser = None) -> dict[str, Any]:
+    """
+    廉价读取上次检测缓存（无 registry 调用），供容器列表/总览徽标。
+    Unraid 风格：不必每次手动点检测。
+    """
+    cache = get_cached_update_status()
+    auto = get_update_auto_settings()
+    return {
+        "ok": True,
+        "viewer": actor,
+        "auto": auto,
+        **cache,
+    }
 
 
 @app.post("/api/ops/one-click-update")
@@ -817,6 +938,70 @@ def api_one_click_update(body: OneClickUpdateBody, actor: AuthUser) -> dict[str,
         only_running=body.only_running,
         actor=actor,
     )
+
+
+@app.get("/api/system/settings")
+def api_get_system_settings(actor: OptionalUser = None) -> dict[str, Any]:
+    """系统设置：代理 + 自动更新检测（非个性化 UI）。"""
+    proxy = _resolve_proxy_view()
+    auto = get_update_auto_settings()
+    return {
+        "ok": True,
+        "viewer": actor,
+        "proxy": proxy,
+        "update_auto": auto,
+        "hints": [
+            "容器环境变量 HTTP_PROXY/HTTPS_PROXY/NO_PROXY 或 DOCKEROPS_*_PROXY 优先；设置页自动识别并锁定。",
+            "镜像拉取与更新检测经 Docker 引擎出网；引擎侧代理需在 Unraid/宿主机配置，此处作用于 DockerOps 进程自身。",
+        ],
+    }
+
+
+@app.put("/api/system/settings")
+def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[str, Any]:
+    """保存系统代理（env 未锁定时）与自动更新检测设置。"""
+    messages: list[str] = []
+    patch = body.model_dump(exclude_none=True)
+
+    # Auto-update settings (always writable)
+    auto_patch: dict[str, Any] = {}
+    if "auto_check_enabled" in patch:
+        auto_patch["auto_check_enabled"] = patch["auto_check_enabled"]
+    if "auto_check_interval_hours" in patch:
+        auto_patch["auto_check_interval_hours"] = patch["auto_check_interval_hours"]
+    auto = get_update_auto_settings()
+    if auto_patch:
+        auto = set_update_auto_settings(**auto_patch)
+        messages.append("自动更新检测已保存")
+        audit("update_auto_settings", actor=actor or "unknown", detail=auto)
+
+    # Proxy: env wins
+    proxy_keys = {"http_proxy", "https_proxy", "no_proxy"}
+    if proxy_keys & set(patch.keys()):
+        if env_proxy_locked():
+            raise HTTPException(
+                status_code=400,
+                detail="代理已由环境变量配置，设置页只读。请修改容器变量 HTTP_PROXY/HTTPS_PROXY/NO_PROXY 或 DOCKEROPS_*_PROXY 后重建容器。",
+            )
+        cur = _load_stored_proxy()
+        if "http_proxy" in patch:
+            cur["http"] = str(patch["http_proxy"] or "").strip()
+        if "https_proxy" in patch:
+            cur["https"] = str(patch["https_proxy"] or "").strip()
+        if "no_proxy" in patch:
+            cur["no_proxy"] = str(patch["no_proxy"] or "").strip()
+        set_meta(META_SYSTEM_PROXY, json.dumps(cur, ensure_ascii=False))
+        apply_proxy_to_environ(http=cur["http"], https=cur["https"], no_proxy=cur["no_proxy"])
+        messages.append("代理已保存并应用到进程环境")
+        audit("system_proxy_update", actor=actor or "unknown", detail={**cur, "source": "stored"})
+
+    proxy = _resolve_proxy_view()
+    return {
+        "ok": True,
+        "proxy": proxy,
+        "update_auto": auto,
+        "message": "；".join(messages) if messages else "无变更",
+    }
 
 
 # ── Compose ──────────────────────────────────────────────

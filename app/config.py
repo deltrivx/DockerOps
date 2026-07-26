@@ -47,17 +47,38 @@ class Settings(BaseSettings):
     # Web exec console (high risk); default off for v0.3
     console_enabled: bool = False
 
+    # Unraid-style background update detect (registry digest cache)
+    update_auto_check: bool = True
+    update_check_interval_hours: int = 6
+    update_check_startup_delay_sec: int = 60
+
+    # Optional container-process proxy (also accepts bare HTTP_PROXY etc.)
+    # Does NOT reconfigure Docker Engine host proxy for pull/inspect_distribution.
+    http_proxy: str = ""
+    https_proxy: str = ""
+    no_proxy: str = ""
+
     @field_validator(
         "takeover_enabled",
         "compose_enabled",
         "unraid_enabled",
         "resource_apis",
         "console_enabled",
+        "update_auto_check",
         mode="before",
     )
     @classmethod
     def _bool_fields(cls, v: object) -> bool:
         return _as_bool(v)
+
+    @field_validator("update_check_interval_hours", mode="before")
+    @classmethod
+    def _interval_hours(cls, v: object) -> int:
+        try:
+            n = int(v)  # type: ignore[arg-type]
+        except Exception:
+            n = 6
+        return max(1, min(48, n))
 
     def ensure_dirs(self) -> Path:
         root = Path(self.data_dir)
@@ -100,11 +121,80 @@ class Settings(BaseSettings):
             )
 
 
+def _env_first(*keys: str) -> str:
+    for k in keys:
+        v = os.environ.get(k)
+        if v is not None and str(v).strip():
+            return str(v).strip()
+    return ""
+
+
+def read_process_proxy() -> dict[str, str]:
+    """
+    Resolve proxy from process env (standard names first, then DOCKEROPS_*).
+    """
+    return {
+        "http": _env_first("HTTP_PROXY", "http_proxy", "DOCKEROPS_HTTP_PROXY"),
+        "https": _env_first("HTTPS_PROXY", "https_proxy", "DOCKEROPS_HTTPS_PROXY"),
+        "no_proxy": _env_first("NO_PROXY", "no_proxy", "DOCKEROPS_NO_PROXY"),
+    }
+
+
+def env_proxy_locked() -> bool:
+    """True if any standard or DOCKEROPS_* proxy env is explicitly set."""
+    keys = (
+        "HTTP_PROXY",
+        "http_proxy",
+        "HTTPS_PROXY",
+        "https_proxy",
+        "NO_PROXY",
+        "no_proxy",
+        "DOCKEROPS_HTTP_PROXY",
+        "DOCKEROPS_HTTPS_PROXY",
+        "DOCKEROPS_NO_PROXY",
+    )
+    return any(bool(os.environ.get(k, "").strip()) for k in keys)
+
+
+def apply_proxy_to_environ(http: str = "", https: str = "", no_proxy: str = "") -> None:
+    """Write proxy into process env for child processes / future HTTP clients."""
+    mapping = {
+        "HTTP_PROXY": (http or "").strip(),
+        "HTTPS_PROXY": (https or "").strip(),
+        "NO_PROXY": (no_proxy or "").strip(),
+    }
+    for k, v in mapping.items():
+        lk = k.lower()
+        if v:
+            os.environ[k] = v
+            os.environ[lk] = v
+        else:
+            os.environ.pop(k, None)
+            os.environ.pop(lk, None)
+
+
+def bootstrap_proxy_from_settings(s: Settings) -> None:
+    """
+    At startup: map DOCKEROPS_* proxy fields into standard env if standard empty.
+    Does not override already-set HTTP_PROXY/HTTPS_PROXY/NO_PROXY.
+    """
+    if s.http_proxy and not _env_first("HTTP_PROXY", "http_proxy"):
+        os.environ["HTTP_PROXY"] = s.http_proxy
+        os.environ["http_proxy"] = s.http_proxy
+    if s.https_proxy and not _env_first("HTTPS_PROXY", "https_proxy"):
+        os.environ["HTTPS_PROXY"] = s.https_proxy
+        os.environ["https_proxy"] = s.https_proxy
+    if s.no_proxy and not _env_first("NO_PROXY", "no_proxy"):
+        os.environ["NO_PROXY"] = s.no_proxy
+        os.environ["no_proxy"] = s.no_proxy
+
+
 @lru_cache
 def get_settings() -> Settings:
     _ = os.environ.get("TZ", "Asia/Shanghai")
     s = Settings()
     if os.environ.get("DOCKER_HOST") and not os.environ.get("DOCKEROPS_DOCKER_HOST"):
         s.docker_host = os.environ["DOCKER_HOST"]
+    bootstrap_proxy_from_settings(s)
     s.ensure_dirs()
     return s

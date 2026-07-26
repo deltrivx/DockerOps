@@ -507,22 +507,69 @@ def docker_events(since: int | None = None, until: int | None = None, filters: d
 
 
 def list_images() -> list[dict[str, Any]]:
+    """
+    Portainer-like image list: short id, tags, size, created, dangling, used_by.
+    """
     c = get_client()
+    # Build image usage counts from containers (Image + ImageID)
+    usage: dict[str, int] = {}
+    try:
+        for cont in c.containers.list(all=True):
+            attrs = cont.attrs or {}
+            cfg = attrs.get("Config") or {}
+            tag0 = ""
+            try:
+                if cont.image and cont.image.tags:
+                    tag0 = cont.image.tags[0]
+            except Exception:
+                tag0 = ""
+            image_name = (cfg.get("Image") or tag0 or "").strip()
+            image_id = attrs.get("Image") or ""
+            try:
+                if not image_id and cont.image is not None:
+                    image_id = cont.image.id or ""
+            except Exception:
+                pass
+            for key in (image_id, image_name):
+                if not key:
+                    continue
+                usage[key] = usage.get(key, 0) + 1
+                if key.startswith("sha256:"):
+                    bare = key.replace("sha256:", "")
+                    usage[bare[:12]] = usage.get(bare[:12], 0) + 1
+                elif len(key) >= 12 and "/" not in key and ":" not in key:
+                    usage[key[:12]] = usage.get(key[:12], 0) + 1
+    except Exception:
+        usage = {}
+
     out: list[dict[str, Any]] = []
     for img in c.images.list():
         tags = img.tags or []
         attrs = img.attrs or {}
+        full_id = img.id or ""
+        short = img.short_id.replace("sha256:", "") if img.short_id else (full_id.replace("sha256:", "")[:12] if full_id else "")
+        dangling = not bool(tags)
+        used = 0
+        for key in [full_id, short, *tags]:
+            if key and key in usage:
+                used = max(used, usage[key])
+        # also match short of full_id
+        if full_id.startswith("sha256:"):
+            bare = full_id[7:]
+            used = max(used, usage.get(bare[:12], 0), usage.get(bare, 0))
         out.append(
             {
-                "id": img.short_id.replace("sha256:", "") if img.short_id else img.id[:12],
-                "full_id": img.id,
+                "id": short,
+                "full_id": full_id,
                 "tags": tags,
-                "label": tags[0] if tags else (img.short_id or img.id[:12]),
+                "label": tags[0] if tags else short or full_id[:12],
                 "size": attrs.get("Size") or 0,
                 "created": attrs.get("Created"),
+                "dangling": dangling,
+                "used_by": int(used),
             }
         )
-    out.sort(key=lambda x: (x.get("label") or ""))
+    out.sort(key=lambda x: (0 if not x.get("dangling") else 1, x.get("label") or ""))
     return out
 
 

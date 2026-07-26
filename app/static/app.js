@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.4",
+  version: "0.4.5",
   tab: "overview",
   needsSetup: false,
   usernames: [],
@@ -15,9 +15,12 @@ const state = {
   compose: [],
   unraid: [],
   updateItems: [],
+  updateStatus: null, // cached GET /api/ops/update-status
+  updateById: {},
   images: [],
   networks: [],
   volumes: [],
+  selectedImages: new Set(),
   prefs: {
     particles: true,
     particles_count: 90,
@@ -25,6 +28,7 @@ const state = {
     card_density: "comfortable",
     reduce_motion: false,
   },
+  systemSettings: null,
   selected: new Set(),
   /** In-flight load token to drop stale overlapping loadAll results. */
   loadSeq: 0,
@@ -40,15 +44,15 @@ const PLATFORM_LABEL = {
 const TAB_TITLES = {
   overview: ["总览", "平台 · 引擎 · 健康 · 活动容器"],
   containers: ["容器", "生命周期 · 批量操作 · 日志 · 安全更新"],
-  updates: ["更新检测", "一键检测镜像更新并安全升级"],
+  updates: ["容器更新", "自动检测 · 列表徽标 · 一键安全升级"],
   compose: ["Compose", "项目发现 · 双方接管"],
   unraid: ["Unraid", "dockerMan 模板 · 非三方更新"],
-  images: ["镜像", "拉取 · 清理 · 历史"],
+  images: ["镜像", "标签 · 占用 · 拉取 · 清理"],
   networks: ["网络", "列表 · 创建 · 删除"],
   volumes: ["卷", "列表 · 创建 · 清理"],
   system: ["系统", "Engine · 磁盘占用 · 清理"],
   docs: ["说明日志", "使用说明 · 版本更新日志"],
-  settings: ["个性化", "背景 · 粒子 · 卡片密度"],
+  settings: ["系统设置", "代理 · 自动更新 · 个性化"],
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -297,9 +301,9 @@ function requireTakeover(action) {
   return true;
 }
 
-function actionBtn(text, fn, { danger = false, disabled = false } = {}) {
+function actionBtn(text, fn, { danger = false, disabled = false, primary = false } = {}) {
   const b = document.createElement("button");
-  b.className = `btn small${danger ? " danger" : ""}`;
+  b.className = `btn small${danger ? " danger" : ""}${primary ? " primary" : ""}`;
   b.textContent = text;
   b.disabled = disabled;
   b.addEventListener("click", fn);
@@ -361,8 +365,80 @@ function switchTab(name) {
     loadResources(name);
   }
   if (name === "docs") loadChangelog();
-  if (name === "settings") applyPrefsLocal(state.prefs);
+  if (name === "settings") {
+    applyPrefsLocal(state.prefs);
+    loadSystemSettings();
+  }
+  if (name === "updates") {
+    // hydrate from cache if empty
+    if (!(state.updateItems && state.updateItems.length) && state.updateStatus) {
+      applyUpdateStatus(state.updateStatus);
+    } else {
+      renderUpdates();
+    }
+  }
   setSidebarOpen(false);
+}
+
+function fmtWhen(ts) {
+  if (ts == null || ts === "") return "—";
+  let d;
+  if (typeof ts === "number") d = new Date(ts * (ts < 1e12 ? 1000 : 1));
+  else d = new Date(ts);
+  if (Number.isNaN(d.getTime())) return String(ts);
+  return d.toLocaleString();
+}
+
+function containerUpdateInfo(c) {
+  const by = state.updateById || {};
+  const id = c.id || "";
+  const name = String(c.name || "").replace(/^\//, "");
+  return (
+    by[id] ||
+    by[String(id).slice(0, 12)] ||
+    by[`name:${name}`] ||
+    null
+  );
+}
+
+function applyUpdateStatus(data) {
+  if (!data) return;
+  state.updateStatus = data;
+  state.updateById = data.by_id || {};
+  if (Array.isArray(data.items) && data.items.length) {
+    state.updateItems = data.items;
+  }
+  const n = data.update_available_count ?? data.summary?.update_available_count ?? 0;
+  const el = $("#stat-updates");
+  if (el) el.textContent = String(n);
+  const chip = $("#stat-updates-chip");
+  if (chip) chip.classList.toggle("has-updates", Number(n) > 0);
+
+  const checked = data.checked_at ? fmtWhen(data.checked_at) : null;
+  const auto = data.auto || {};
+  const autoOn = auto.auto_check_enabled !== false;
+  const sum = $("#update-summary");
+  if (sum) {
+    if (data.cached && checked) {
+      sum.textContent =
+        (data.message || data.summary?.message || `可更新 ${n}`) +
+        ` · 上次检测 ${checked}` +
+        (autoOn ? " · 自动检测已开启" : " · 自动检测已关闭");
+    } else if (!data.cached) {
+      sum.textContent = autoOn
+        ? "尚未检测 · 后台将自动扫描（也可点「立即检测」）"
+        : "尚未检测 · 请点击「立即检测」";
+    }
+  }
+  const hint = $("#update-auto-hint");
+  if (hint && auto) {
+    const hours = auto.auto_check_interval_hours || 6;
+    hint.textContent = autoOn
+      ? `后台每 ${hours} 小时自动比对 registry digest；容器列表直接显示「有更新」。`
+      : "后台自动检测已关闭；可在系统设置开启，或手动「立即检测」。";
+  }
+  if (state.tab === "updates") renderUpdates();
+  if (state.tab === "containers" || state.tab === "overview") renderContainers();
 }
 
 async function checkSetup() {
@@ -446,11 +522,15 @@ function renderContainers() {
         : c.manager === "unraid"
           ? `<div class="muted mono">template</div>`
           : "";
+    const upd = containerUpdateInfo(c);
+    const updBadge = upd && upd.update_available
+      ? `<span class="pill update-yes" title="${escapeHtml(upd.message || "有更新")}">有更新</span>`
+      : "";
     tr.innerHTML = `
       <td><input type="checkbox" class="ctr-sel" data-id="${escapeHtml(id)}" ${checked} /></td>
-      <td><strong>${escapeHtml(c.name || c.id)}</strong><div class="muted mono">${escapeHtml(c.id || "")}</div></td>
+      <td><strong>${escapeHtml(c.name || c.id)}</strong> ${updBadge}<div class="muted mono cell-clip" title="${escapeHtml(c.id || "")}">${escapeHtml(c.id || "")}</div></td>
       <td>${managerPill(c.manager, c.label)}${mgrExtra}</td>
-      <td class="mono">${escapeHtml(c.image || "")}</td>
+      <td class="mono"><span class="cell-clip" title="${escapeHtml(c.image || "")}">${escapeHtml(c.image || "")}</span></td>
       <td><span class="${pillClass(c.status)}">${escapeHtml(c.status || "-")}</span></td>
       <td><span class="${pillClass(c.health || "none")}">${escapeHtml(c.health || "-")}</span></td>
       <td>${c.restart_count ?? 0}</td>
@@ -470,7 +550,11 @@ function renderContainers() {
     actions.appendChild(actionBtn("日志", () => showLogs(id, c.name)));
     actions.appendChild(actionBtn("重命名", () => doRename(id, c.name)));
     actions.appendChild(actionBtn("备份", () => doBackup(id)));
-    actions.appendChild(actionBtn("更新", () => doUpdate(id)));
+    actions.appendChild(
+      actionBtn(upd && upd.update_available ? "应用更新" : "更新", () => doUpdate(id), {
+        primary: !!(upd && upd.update_available),
+      })
+    );
     actions.appendChild(actionBtn("回滚", () => doRollback(id)));
     if (c.manager === "third_party") {
       actions.appendChild(actionBtn("Adopt", () => doAdopt(id), { disabled: !state.takeover }));
@@ -557,10 +641,11 @@ function renderUnraid() {
 
 function renderUpdates() {
   const body = $("#update-rows");
+  if (!body) return;
   const items = state.updateItems || [];
   body.innerHTML = "";
   if (!items.length) {
-    body.innerHTML = `<tr><td colspan="7" class="muted">点击「检测更新」开始扫描</td></tr>`;
+    body.innerHTML = `<tr><td colspan="7" class="muted">暂无检测结果 · 后台自动扫描后将显示，或点击「立即检测」</td></tr>`;
     return;
   }
   items.forEach((u) => {
@@ -577,18 +662,18 @@ function renderUpdates() {
     const canSel = !!u.update_available;
     tr.innerHTML = `
       <td><input type="checkbox" class="upd-sel" data-id="${escapeHtml(u.id || "")}" ${canSel ? "" : "disabled"} ${canSel ? "checked" : ""} /></td>
-      <td><strong>${escapeHtml(u.name || "")}</strong><div class="muted mono">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
+      <td><strong>${escapeHtml(u.name || "")}</strong><div class="muted mono cell-clip">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
       <td>${managerPill(u.manager)}</td>
-      <td class="mono small">${escapeHtml(u.image || "-")}</td>
+      <td class="mono small"><span class="cell-clip" title="${escapeHtml(u.image || "")}">${escapeHtml(u.image || "-")}</span></td>
       <td><span class="${pillClass(u.status)}">${escapeHtml(u.status || "-")}</span></td>
       <td><span class="pill ${pill}">${escapeHtml(label)}</span>
-        <div class="muted small">${escapeHtml(u.message || "")}${u.remote_digest ? `<br/>remote: ${escapeHtml(String(u.remote_digest).slice(0, 24))}…` : ""}</div>
+        <div class="muted small cell-clip" title="${escapeHtml(u.message || "")}">${escapeHtml(u.message || "")}${u.remote_digest ? ` · ${escapeHtml(String(u.remote_digest).slice(0, 18))}…` : ""}</div>
       </td>
       <td class="actions"></td>
     `;
     const actions = tr.querySelector(".actions");
     if (u.id) {
-      actions.appendChild(actionBtn("安全更新", () => doUpdate(u.id)));
+      actions.appendChild(actionBtn("安全更新", () => doUpdate(u.id), { primary: !!u.update_available }));
       actions.appendChild(actionBtn("日志", () => showLogs(u.id, u.name)));
     }
     body.appendChild(tr);
@@ -636,6 +721,13 @@ function renderOverviewCards({ doctor, health, platform, summary, sysInfo }) {
   setTxt("stat-total", dcounts.containers ?? ctrs.length);
   setTxt("stat-unhealthy", unhealthy);
   setTxt("stat-images", sysInfo?.Images ?? sysInfo?.images ?? dcounts.warning ?? "-");
+  const updN =
+    state.updateStatus?.update_available_count ??
+    state.updateStatus?.summary?.update_available_count ??
+    0;
+  setTxt("stat-updates", updN);
+  const chip = $("#stat-updates-chip");
+  if (chip) chip.classList.toggle("has-updates", Number(updN) > 0);
 
   const eng = doctor.engine || health.docker || {};
   const si = sysInfo || {};
@@ -762,7 +854,7 @@ async function loadAll() {
 
     setLoading(true, "加载控制台…");
     // Fast path only — never wait on container stats (activity is deferred)
-    const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, sysPack] =
+    const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, sysPack, updStatus] =
       await Promise.all([
         api("/api/doctor"),
         api("/api/containers"),
@@ -775,6 +867,7 @@ async function loadAll() {
         api("/api/events?limit=30").catch(() => ({ items: [] })),
         api("/api/prefs").catch(() => ({ prefs: state.prefs })),
         api("/api/system/info").catch(() => ({ info: null })),
+        api("/api/ops/update-status").catch(() => null),
       ]);
 
     if (seq !== state.loadSeq) return;
@@ -787,6 +880,7 @@ async function loadAll() {
     state.unraid = unraid.items || [];
     updateComposeNavVisibility();
     if (prefs.prefs) applyPrefsLocal(prefs.prefs);
+    if (updStatus) applyUpdateStatus(updStatus);
     if (window.DockerOpsParticles) {
       window.DockerOpsParticles.applyPrefs(state.prefs);
     }
@@ -996,32 +1090,71 @@ async function loadResources(kind) {
   }
 }
 
+function imageRef(img) {
+  return (img.tags && img.tags[0]) || img.full_id || img.id;
+}
+
+function updateImageSelCount() {
+  const el = $("#image-sel-count");
+  const n = state.selectedImages.size;
+  if (el) el.textContent = `已选 ${n}`;
+  const btn = $("#btn-image-batch-remove");
+  if (btn) btn.disabled = n === 0 || !state.takeover;
+}
+
 function renderImages() {
   const q = ($("#image-filter")?.value || "").trim();
+  const vf = ($("#image-view-filter")?.value || "all").trim();
   let items = state.images || [];
-  if (q) items = items.filter((i) => matchFilter([i.label, ...(i.tags || []), i.id].join(" "), q));
-  $("#image-count").textContent = `显示 ${items.length} / 共 ${state.images.length} 个`;
+  if (vf === "dangling") items = items.filter((i) => i.dangling || !(i.tags && i.tags.length));
+  if (vf === "unused") items = items.filter((i) => !i.used_by);
+  if (q) items = items.filter((i) => matchFilter([i.label, ...(i.tags || []), i.id, i.full_id].join(" "), q));
+  const countEl = $("#image-count");
+  if (countEl) countEl.textContent = `显示 ${items.length} / 共 ${state.images.length} 个`;
   const body = $("#image-rows");
+  if (!body) return;
   body.innerHTML = "";
   items.forEach((img) => {
     const tr = document.createElement("tr");
-    const label = (img.tags && img.tags[0]) || img.label || img.id;
+    const tags = img.tags || [];
+    const dangling = img.dangling || !tags.length;
+    const ref = imageRef(img);
+    const selKey = img.full_id || img.id || ref;
+    const checked = state.selectedImages.has(selKey) ? "checked" : "";
+    let tagHtml;
+    if (dangling) {
+      tagHtml = `<span class="badge-dangling" title="dangling">&lt;none&gt;</span>`;
+    } else {
+      const main = tags[0] || img.label || "";
+      const extra = tags.length > 1 ? `<div class="tag-more" title="${escapeHtml(tags.slice(1).join(", "))}">+${tags.length - 1} 个标签</div>` : "";
+      tagHtml = `<div class="tag-list mono"><div class="tag-main" title="${escapeHtml(main)}">${escapeHtml(main)}</div>${extra}</div>`;
+    }
+    const used = Number(img.used_by) || 0;
+    const usedHtml = used > 0 ? `${used}` : `<span class="badge-unused">未使用</span>`;
     tr.innerHTML = `
-      <td class="mono"><strong>${escapeHtml(label)}</strong>
-        <div class="muted">${escapeHtml((img.tags || []).slice(1).join(", "))}</div>
-        <div class="muted">${escapeHtml(img.id || "")}</div>
-      </td>
+      <td><input type="checkbox" class="img-sel" data-id="${escapeHtml(selKey)}" data-ref="${escapeHtml(ref)}" ${checked} /></td>
+      <td>${tagHtml}</td>
+      <td class="mono small"><span class="cell-clip" title="${escapeHtml(img.full_id || img.id || "")}">${escapeHtml(img.id || "")}</span></td>
       <td>${fmtBytes(img.size)}</td>
-      <td class="muted small">${escapeHtml(img.created || "-")}</td>
+      <td class="muted small">${escapeHtml(fmtWhen(img.created))}</td>
+      <td>${usedHtml}</td>
       <td class="actions"></td>
     `;
-    const ref = (img.tags && img.tags[0]) || img.id;
     const actions = tr.querySelector(".actions");
     actions.appendChild(actionBtn("历史", () => showImageHistory(ref)));
     actions.appendChild(actionBtn("删除", () => doImageRemove(ref), { danger: true, disabled: !state.takeover }));
     body.appendChild(tr);
   });
-  if (!items.length) body.innerHTML = `<tr><td colspan="4" class="muted">无镜像</td></tr>`;
+  if (!items.length) body.innerHTML = `<tr><td colspan="7" class="muted">无镜像</td></tr>`;
+  body.querySelectorAll(".img-sel").forEach((cb) => {
+    cb.addEventListener("change", () => {
+      const id = cb.dataset.id;
+      if (cb.checked) state.selectedImages.add(id);
+      else state.selectedImages.delete(id);
+      updateImageSelCount();
+    });
+  });
+  updateImageSelCount();
 }
 
 function renderNetworks() {
@@ -1229,6 +1362,12 @@ async function doUpdate(id) {
       body: JSON.stringify({}),
     });
     alert(r.message || "更新完成");
+    // refresh update cache badges after apply
+    try {
+      await runDetectUpdates();
+    } catch (_) {
+      /* ignore */
+    }
     loadAll();
   } catch (e) {
     alert(`更新失败：${e.message}`);
@@ -1383,14 +1522,80 @@ async function runDetectUpdates() {
       body: JSON.stringify({ only_running: onlyRunning }),
     });
     state.updateItems = r.items || [];
-    $("#update-summary").textContent = r.message || `可更新 ${r.update_available_count || 0}`;
+    // rebuild by_id for container badges
+    const by = {};
+    (r.items || []).forEach((it) => {
+      if (!it.id) return;
+      by[it.id] = it;
+      by[String(it.id).slice(0, 12)] = it;
+      if (it.name) by[`name:${String(it.name).replace(/^\//, "")}`] = it;
+    });
+    state.updateById = by;
+    state.updateStatus = {
+      cached: true,
+      checked_at: Date.now() / 1000,
+      items: r.items || [],
+      by_id: by,
+      update_available_count: r.update_available_count || 0,
+      summary: {
+        scanned: r.scanned,
+        update_available_count: r.update_available_count,
+        message: r.message,
+        elapsed_sec: r.elapsed_sec,
+      },
+      message: r.message,
+      auto: state.updateStatus?.auto,
+    };
+    applyUpdateStatus(state.updateStatus);
     if (prog) prog.textContent = `完成 · 耗时 ${r.elapsed_sec ?? "?"}s`;
     renderUpdates();
+    renderContainers();
     return r;
   } catch (e) {
     if (prog) prog.textContent = `检测失败：${e.message}`;
     alert(e.message);
     return null;
+  }
+}
+
+async function loadSystemSettings() {
+  try {
+    const r = await api("/api/system/settings");
+    state.systemSettings = r;
+    const proxy = r.proxy || {};
+    const auto = r.update_auto || {};
+    const hp = $("#sys-http-proxy");
+    const hsp = $("#sys-https-proxy");
+    const np = $("#sys-no-proxy");
+    if (hp) hp.value = proxy.http || "";
+    if (hsp) hsp.value = proxy.https || "";
+    if (np) np.value = proxy.no_proxy || "";
+    const locked = !!proxy.env_locked;
+    [hp, hsp, np].forEach((el) => {
+      if (el) el.readOnly = locked;
+    });
+    ["row-http-proxy", "row-https-proxy", "row-no-proxy"].forEach((id) => {
+      const row = document.getElementById(id);
+      if (row) row.classList.toggle("locked", locked);
+    });
+    const badge = $("#proxy-env-badge");
+    if (badge) badge.hidden = !locked;
+    const src = $("#sys-settings-source");
+    if (src) {
+      src.textContent =
+        proxy.source === "env"
+          ? "代理来源：环境变量"
+          : proxy.source === "stored"
+            ? "代理来源：已保存配置"
+            : "代理未配置";
+    }
+    const ac = $("#sys-auto-check");
+    if (ac) ac.checked = auto.auto_check_enabled !== false;
+    const iv = $("#sys-auto-interval");
+    if (iv) iv.value = String(auto.auto_check_interval_hours || 6);
+  } catch (e) {
+    const st = $("#sys-settings-status");
+    if (st) st.textContent = e.message || "加载系统设置失败";
   }
 }
 
@@ -1454,6 +1659,19 @@ const uf = $("#unraid-filter");
 if (uf) uf.addEventListener("input", renderUnraid);
 const imf = $("#image-filter");
 if (imf) imf.addEventListener("input", renderImages);
+const ivf = $("#image-view-filter");
+if (ivf) ivf.addEventListener("change", renderImages);
+$("#img-check-all")?.addEventListener("change", (e) => {
+  document.querySelectorAll(".img-sel").forEach((c) => {
+    c.checked = e.target.checked;
+    const id = c.dataset.id;
+    if (!id) return;
+    if (e.target.checked) state.selectedImages.add(id);
+    else state.selectedImages.delete(id);
+  });
+  updateImageSelCount();
+});
+$("#stat-updates-chip")?.addEventListener("click", () => switchTab("updates"));
 const nf = $("#network-filter");
 if (nf) nf.addEventListener("input", renderNetworks);
 const vf = $("#volume-filter");
@@ -1534,6 +1752,32 @@ $("#btn-save-prefs")?.addEventListener("click", async () => {
   }
 });
 
+$("#btn-save-sys-settings")?.addEventListener("click", async () => {
+  if (!requireLogin()) return;
+  const body = {
+    auto_check_enabled: !!$("#sys-auto-check")?.checked,
+    auto_check_interval_hours: Number($("#sys-auto-interval")?.value || 6),
+  };
+  const locked = !!state.systemSettings?.proxy?.env_locked;
+  if (!locked) {
+    body.http_proxy = $("#sys-http-proxy")?.value || "";
+    body.https_proxy = $("#sys-https-proxy")?.value || "";
+    body.no_proxy = $("#sys-no-proxy")?.value || "";
+  }
+  try {
+    const r = await api("/api/system/settings", { method: "PUT", body: JSON.stringify(body) });
+    $("#sys-settings-status").textContent = r.message || "已保存";
+    state.systemSettings = r;
+    if (r.update_auto && state.updateStatus) {
+      state.updateStatus.auto = r.update_auto;
+      applyUpdateStatus(state.updateStatus);
+    }
+    await loadSystemSettings();
+  } catch (e) {
+    $("#sys-settings-status").textContent = e.message || "保存失败";
+  }
+});
+
 $("#btn-image-pull").addEventListener("click", async () => {
   if (!requireLogin()) return;
   const image = prompt("镜像名（如 nginx:alpine）");
@@ -1557,6 +1801,26 @@ $("#btn-image-prune").addEventListener("click", async () => {
   } catch (e) {
     alert(e.message);
   }
+});
+
+$("#btn-image-batch-remove")?.addEventListener("click", async () => {
+  if (!requireLogin() || !requireTakeover("批量删除镜像")) return;
+  const ids = Array.from(state.selectedImages);
+  if (!ids.length) return;
+  if (!confirm(`删除选中的 ${ids.length} 个镜像？`)) return;
+  let ok = 0;
+  let fail = 0;
+  for (const id of ids) {
+    try {
+      await api(`/api/images/${encodeURIComponent(id)}?force=false`, { method: "DELETE" });
+      ok += 1;
+      state.selectedImages.delete(id);
+    } catch (_) {
+      fail += 1;
+    }
+  }
+  alert(`批量删除完成：成功 ${ok}，失败 ${fail}`);
+  loadResources("images");
 });
 
 $("#btn-net-create").addEventListener("click", async () => {

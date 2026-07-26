@@ -53,11 +53,11 @@
           <span class="nav-ico">☰</span> 说明日志
         </button>
         <button type="button" class="nav-item" data-tab="settings">
-          <span class="nav-ico">✧</span> 个性化
+          <span class="nav-ico">✧</span> 系统设置
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.4.4 · —
+        v0.4.5 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -94,6 +94,9 @@
             <div class="stat-chip"><span class="stat-val" id="stat-total">-</span><span class="stat-key">容器</span></div>
             <div class="stat-chip"><span class="stat-val" id="stat-unhealthy">-</span><span class="stat-key">异常</span></div>
             <div class="stat-chip"><span class="stat-val" id="stat-images">-</span><span class="stat-key">镜像</span></div>
+            <div class="stat-chip clickable" id="stat-updates-chip" title="查看可更新容器">
+              <span class="stat-val" id="stat-updates">-</span><span class="stat-key">可更新</span>
+            </div>
           </div>
           <ul id="advice" class="advice"></ul>
         </section>
@@ -257,12 +260,13 @@
         <section class="card wide tab-panel" data-panel="updates" hidden>
           <div class="row-between wrap">
             <div>
-              <h2>一键检测 / 更新</h2>
-              <span id="update-summary" class="muted">尚未检测</span>
+              <h2>容器更新</h2>
+              <span id="update-summary" class="muted">加载缓存中…</span>
+              <div id="update-auto-hint" class="muted small mt">后台自动检测开启后，列表会像 Unraid 一样直接显示可更新状态。</div>
             </div>
             <div class="toolbar">
               <label class="chk"><input type="checkbox" id="upd-only-running" checked /> 仅运行中</label>
-              <button type="button" class="btn primary" id="btn-detect-updates">检测更新</button>
+              <button type="button" class="btn primary" id="btn-detect-updates">立即检测</button>
               <button type="button" class="btn" id="btn-one-click-update">一键更新可更新项</button>
             </div>
           </div>
@@ -271,17 +275,17 @@
             <table>
               <thead>
                 <tr>
-                  <th><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
-                  <th>容器</th>
-                  <th>管理源</th>
+                  <th style="width:2.2rem"><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
+                  <th style="width:18%">容器</th>
+                  <th style="width:10%">管理源</th>
                   <th>镜像</th>
-                  <th>状态</th>
-                  <th>检测结果</th>
-                  <th>操作</th>
+                  <th style="width:8%">状态</th>
+                  <th style="width:18%">检测结果</th>
+                  <th style="width:12%">操作</th>
                 </tr>
               </thead>
               <tbody id="update-rows">
-                <tr><td colspan="7" class="muted">点击「检测更新」开始扫描</td></tr>
+                <tr><td colspan="7" class="muted">等待状态缓存或点击「立即检测」</td></tr>
               </tbody>
             </table>
           </div>
@@ -341,7 +345,7 @@
           </div>
         </section>
 
-        <!-- Images -->
+        <!-- Images (Portainer-like) -->
         <section class="card wide tab-panel" data-panel="images" hidden>
           <div class="row-between wrap">
             <div>
@@ -350,22 +354,43 @@
             </div>
             <div class="toolbar">
               <input type="search" id="image-filter" class="input" placeholder="搜索镜像…" />
+              <select id="image-view-filter" class="input select" title="筛选">
+                <option value="all">全部</option>
+                <option value="dangling">仅 dangling</option>
+                <option value="unused">仅未使用</option>
+              </select>
               <button type="button" class="btn small" id="btn-image-pull">拉取</button>
+              <button type="button" class="btn small danger" id="btn-image-batch-remove" disabled>批量删除</button>
               <button type="button" class="btn small danger" id="btn-image-prune">清理 dangling</button>
             </div>
           </div>
+          <div class="batch-bar" id="image-batch-bar">
+            <span class="muted small" id="image-sel-count">已选 0</span>
+          </div>
           <div class="table-wrap">
-            <table>
+            <table class="images-table">
+              <colgroup>
+                <col style="width:2.2rem" />
+                <col />
+                <col style="width:7.5rem" />
+                <col style="width:6.5rem" />
+                <col style="width:9rem" />
+                <col style="width:5.5rem" />
+                <col style="width:8.5rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>标签 / ID</th>
+                  <th><input type="checkbox" id="img-check-all" title="全选" /></th>
+                  <th>标签</th>
+                  <th>ID</th>
                   <th>大小</th>
                   <th>创建</th>
+                  <th>占用</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody id="image-rows">
-                <tr><td colspan="4" class="muted">加载中…</td></tr>
+                <tr><td colspan="7" class="muted">加载中…</td></tr>
               </tbody>
             </table>
           </div>
@@ -481,50 +506,100 @@
           <div id="changelog-list" class="changelog">加载中…</div>
         </section>
 
-        <!-- Settings / prefs -->
+        <!-- Settings / system + prefs -->
         <section class="card wide tab-panel" data-panel="settings" hidden>
-          <div class="card-head"><h2>个性化设置</h2></div>
-          <div class="settings-grid">
-            <label class="setting-row">
-              <span>粒子特效</span>
-              <input type="checkbox" id="pref-particles" checked />
-            </label>
-            <label class="setting-row">
-              <span>粒子数量</span>
-              <input type="range" id="pref-particles-count" min="30" max="200" step="10" value="90" />
-              <span class="muted small" id="pref-particles-count-val">90</span>
-            </label>
-            <label class="setting-row">
-              <span>背景主题</span>
-              <select id="pref-bg-theme" class="input select">
-                <option value="cyber">赛博紫青</option>
-                <option value="deep">深空黑</option>
-                <option value="aurora">极光</option>
-                <option value="plain">纯净暗色</option>
-              </select>
-            </label>
-            <label class="setting-row">
-              <span>卡片密度</span>
-              <select id="pref-density" class="input select">
-                <option value="comfortable">舒适</option>
-                <option value="compact">紧凑</option>
-              </select>
-            </label>
-            <label class="setting-row">
-              <span>减少动效</span>
-              <input type="checkbox" id="pref-reduce-motion" />
-            </label>
+          <div class="card-head">
+            <h2>系统设置</h2>
+            <span class="muted small" id="sys-settings-source"></span>
           </div>
+
+          <div class="settings-section" style="margin-top:0;padding-top:0;border-top:none">
+            <h3>网络代理 <span id="proxy-env-badge" class="env-lock-badge" hidden>来自环境变量</span></h3>
+            <p class="muted small">
+              支持容器变量 <code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> / <code>NO_PROXY</code>
+              或 <code>DOCKEROPS_*_PROXY</code>；若已配置变量，本页自动识别并只读。
+              镜像拉取与更新检测经 Docker 引擎出网——引擎代理需在 Unraid/宿主机配置；此处作用于 DockerOps 进程自身。
+            </p>
+            <div class="settings-grid">
+              <label class="setting-row" id="row-http-proxy">
+                <span>HTTP_PROXY</span>
+                <input type="text" class="input" id="sys-http-proxy" placeholder="http://host:port" autocomplete="off" />
+              </label>
+              <label class="setting-row" id="row-https-proxy">
+                <span>HTTPS_PROXY</span>
+                <input type="text" class="input" id="sys-https-proxy" placeholder="http://host:port" autocomplete="off" />
+              </label>
+              <label class="setting-row" id="row-no-proxy">
+                <span>NO_PROXY</span>
+                <input type="text" class="input" id="sys-no-proxy" placeholder="localhost,127.0.0.1,.local" autocomplete="off" />
+              </label>
+            </div>
+          </div>
+
+          <div class="settings-section">
+            <h3>自动更新检测</h3>
+            <p class="muted small">对齐 Unraid：后台定期比对 registry digest，容器列表直接显示「有更新」，无需每次手动点检测。</p>
+            <div class="settings-grid">
+              <label class="setting-row">
+                <span>启用后台检测</span>
+                <input type="checkbox" id="sys-auto-check" checked />
+              </label>
+              <label class="setting-row">
+                <span>检测间隔（小时）</span>
+                <input type="number" class="input" id="sys-auto-interval" min="1" max="48" value="6" />
+              </label>
+            </div>
+          </div>
+
           <div class="toolbar mt">
-            <button type="button" class="btn primary" id="btn-save-prefs">保存设置</button>
-            <span class="muted small" id="prefs-status"></span>
+            <button type="button" class="btn primary" id="btn-save-sys-settings">保存系统设置</button>
+            <span class="muted small" id="sys-settings-status"></span>
           </div>
-          <p class="muted small mt">设置保存在服务端，登录后同步；本地会即时预览。</p>
+
+          <div class="settings-section">
+            <div class="card-head"><h2>个性化</h2></div>
+            <div class="settings-grid">
+              <label class="setting-row">
+                <span>粒子特效</span>
+                <input type="checkbox" id="pref-particles" checked />
+              </label>
+              <label class="setting-row">
+                <span>粒子数量</span>
+                <input type="range" id="pref-particles-count" min="30" max="200" step="10" value="90" />
+                <span class="muted small" id="pref-particles-count-val">90</span>
+              </label>
+              <label class="setting-row">
+                <span>背景主题</span>
+                <select id="pref-bg-theme" class="input select">
+                  <option value="cyber">赛博紫青</option>
+                  <option value="deep">深空黑</option>
+                  <option value="aurora">极光</option>
+                  <option value="plain">纯净暗色</option>
+                </select>
+              </label>
+              <label class="setting-row">
+                <span>卡片密度</span>
+                <select id="pref-density" class="input select">
+                  <option value="comfortable">舒适</option>
+                  <option value="compact">紧凑</option>
+                </select>
+              </label>
+              <label class="setting-row">
+                <span>减少动效</span>
+                <input type="checkbox" id="pref-reduce-motion" />
+              </label>
+            </div>
+            <div class="toolbar mt">
+              <button type="button" class="btn primary" id="btn-save-prefs">保存个性化</button>
+              <span class="muted small" id="prefs-status"></span>
+            </div>
+            <p class="muted small mt">个性化保存在服务端，登录后同步；本地会即时预览。</p>
+          </div>
         </section>
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.4.4</span> ·
+        DockerOps <span id="foot-version">v0.4.5</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>

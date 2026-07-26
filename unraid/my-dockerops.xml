@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DockerOps</Name>
-  <Repository>ghcr.io/deltrivx/dockerops:0.4.4</Repository>
+  <Repository>ghcr.io/deltrivx/dockerops:0.4.5</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.4.3 — 面向 Unraid 的 Docker 运维平台。打开网页：无账号强制初始化、有账号强制登录；忘记密码见终端 docker exec … python -m tools.reset_password。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.4.5 — Unraid 式后台更新检测（列表直接显示可更新）、Portainer 风格镜像页、系统代理设置（环境变量优先自动识别）。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>
@@ -36,6 +36,11 @@
   <Config Name="Compose Project Dirs" Target="DOCKEROPS_COMPOSE_PROJECT_DIRS" Default="/host/appdata" Mode="" Description="额外扫描的 compose 目录，容器内路径，冒号分隔" Type="Variable" Display="advanced" Required="false" Mask="false">/host/appdata</Config>
   <Config Name="Unraid Enabled" Target="DOCKEROPS_UNRAID_ENABLED" Default="true" Mode="" Description="启用 Unraid 模板管理" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
   <Config Name="Unraid Templates Path" Target="DOCKEROPS_UNRAID_TEMPLATES_USER" Default="/unraid/templates-user" Mode="" Description="容器内模板路径" Type="Variable" Display="advanced" Required="false" Mask="false">/unraid/templates-user</Config>
+  <Config Name="Update Auto Check" Target="DOCKEROPS_UPDATE_AUTO_CHECK" Default="true" Mode="" Description="后台自动检测容器镜像更新（Unraid 风格列表徽标）" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
+  <Config Name="Update Check Interval Hours" Target="DOCKEROPS_UPDATE_CHECK_INTERVAL_HOURS" Default="6" Mode="" Description="自动检测间隔（小时，1-48）" Type="Variable" Display="advanced" Required="false" Mask="false">6</Config>
+  <Config Name="HTTP Proxy" Target="HTTP_PROXY" Default="" Mode="" Description="可选。DockerOps 进程 HTTP 代理；填写后设置页只读识别。引擎 pull 代理需在 Unraid Docker 设置" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="HTTPS Proxy" Target="HTTPS_PROXY" Default="" Mode="" Description="可选。DockerOps 进程 HTTPS 代理" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="NO Proxy" Target="NO_PROXY" Default="" Mode="" Description="可选。不走代理的主机列表，如 localhost,127.0.0.1" Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
   <Config Name="TZ" Target="TZ" Default="Asia/Shanghai" Mode="" Description="时区" Type="Variable" Display="advanced" Required="false" Mask="false">Asia/Shanghai</Config>
   <Config Name="managed" Target="net.unraid.docker.managed" Default="dockerman" Mode="" Description="保持 Unraid DockerMan 管理" Type="Label" Display="advanced" Required="false" Mask="false">dockerman</Config>
 </Container>

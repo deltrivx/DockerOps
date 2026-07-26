@@ -321,6 +321,8 @@ a { color: var(--cyan); }
   transition: border-color 0.15s, box-shadow 0.15s;
   position: relative;
   z-index: 1;
+  min-width: 0; /* prevent wide table content from expanding the page */
+  max-width: 100%;
 }
 
 .card:hover {
@@ -531,17 +533,93 @@ a { color: var(--cyan); }
   line-height: 1.5;
 }
 
-.table-wrap { overflow: auto; -webkit-overflow-scrolling: touch; }
+.table-wrap {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  max-width: 100%;
+}
 table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  table-layout: fixed; /* clip long tags instead of page-wide shift */
 }
 th, td {
   text-align: left;
   padding: 0.6rem 0.45rem;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
+  overflow: hidden;
+}
+.cell-clip {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+  display: block;
+}
+.tag-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  min-width: 0;
+}
+.tag-list .tag-main {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tag-list .tag-more {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.badge-dangling {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  border: 1px solid rgba(251, 191, 36, 0.45);
+  color: #fbbf24;
+  background: rgba(251, 191, 36, 0.1);
+}
+.badge-unused {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.stat-chip.clickable {
+  cursor: pointer;
+}
+.stat-chip.clickable:hover {
+  border-color: rgba(108, 92, 231, 0.45);
+}
+.stat-chip.has-updates .stat-val {
+  color: #fb3f62;
+}
+.settings-section {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.settings-section h3 {
+  margin: 0 0 0.75rem;
+  font-size: 0.95rem;
+}
+.setting-row input[type="text"],
+.setting-row input[type="url"] {
+  min-width: 0;
+  flex: 1;
+  max-width: 100%;
+}
+.setting-row.locked input {
+  opacity: 0.75;
+}
+.env-lock-badge {
+  font-size: 0.72rem;
+  color: #34d399;
+  border: 1px solid rgba(52, 211, 153, 0.4);
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
 }
 th {
   color: var(--muted);
