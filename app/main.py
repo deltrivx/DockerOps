@@ -98,8 +98,15 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.3"
+VERSION = "0.5.4"
 CHANGELOG = [
+    {
+        "version": "0.5.4",
+        "date": "2026-07-26",
+        "items": [
+            "操作按钮按单元格可用宽度自动外露，仅放不下时才收进「更多」",
+        ],
+    },
     {
         "version": "0.5.3",
         "date": "2026-07-26",

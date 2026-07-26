@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.5.3",
+  version: "0.5.4",
   tab: "overview",
   /** Live log stream controller */
   logs: {
@@ -340,13 +340,21 @@ function isNarrowScreen() {
   }
 }
 
-function actionMaxPrimary(defaultN = 4) {
-  return isNarrowScreen() ? 1 : defaultN;
+/** Approx width of 「更多」 summary button (px) when measuring overflow. */
+const ACTION_MORE_BTN_W = 52;
+const ACTION_GAP_PX = 4;
+
+/**
+ * Preferred max visible buttons only as a hard ceiling (safety); real limit is
+ * available cell width — overflow auto-folds into 「更多」.
+ */
+function actionMaxPrimary(defaultN = 99) {
+  return isNarrowScreen() ? Math.min(2, defaultN) : defaultN;
 }
 
 /**
- * Compact actions: desktop up to 4 primary buttons + "更多" dropdown.
- * Pack left so ops sit next to content (no empty hole before buttons).
+ * Render row actions: show as many as fit in the cell; only overflow goes to 「更多」.
+ * Order = primary then more. Dedupes by label.
  * @param {HTMLElement} host
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean, primary?:boolean}[]} primary
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean}[]} [more]
@@ -354,51 +362,161 @@ function actionMaxPrimary(defaultN = 4) {
  */
 function fillActionGroup(host, primary, more = [], opts = {}) {
   host.classList.add("actions", "col-actions");
+  // disconnect previous observer if re-rendering
+  if (host._actionRo) {
+    try {
+      host._actionRo.disconnect();
+    } catch (_) {
+      /* ignore */
+    }
+    host._actionRo = null;
+  }
   host.innerHTML = "";
-  const maxPrimary = opts.maxPrimary ?? actionMaxPrimary(4);
-  const allPrimary = (primary || []).filter(Boolean);
-  const shown = allPrimary.slice(0, maxPrimary);
-  const overflow = allPrimary.slice(maxPrimary);
-  const extra = [...overflow, ...(more || []).filter(Boolean)];
+
+  const hardMax = opts.maxPrimary ?? actionMaxPrimary(99);
+  const seen = new Set();
+  const all = [];
+  for (const a of [...(primary || []), ...(more || [])]) {
+    if (!a || !a.label || seen.has(a.label)) continue;
+    seen.add(a.label);
+    all.push(a);
+  }
+  if (!all.length) return;
+
   const group = document.createElement("div");
   group.className = "action-group";
-  shown.forEach((a) => {
-    group.appendChild(
-      actionBtn(a.label, a.fn, {
+  host.appendChild(group);
+
+  const measureWidths = () => {
+    const probe = document.createElement("div");
+    probe.className = "action-group action-group-measure";
+    probe.setAttribute("aria-hidden", "true");
+    probe.style.cssText =
+      "position:absolute;left:-9999px;top:0;visibility:hidden;display:inline-flex;align-items:center;gap:0.22rem;white-space:nowrap;pointer-events:none;";
+    document.body.appendChild(probe);
+    const widths = all.map((a) => {
+      const b = actionBtn(a.label, () => {}, {
         danger: !!a.danger,
         disabled: !!a.disabled,
         primary: !!a.primary,
-      })
-    );
-  });
-  if (extra.length) {
-    const det = document.createElement("details");
-    det.className = "action-menu";
-    const sum = document.createElement("summary");
-    sum.className = "btn small";
-    sum.textContent = "更多";
-    sum.title = "更多操作";
-    det.appendChild(sum);
-    const panel = document.createElement("div");
-    panel.className = "action-menu-panel";
-    extra.forEach((a) => {
-      panel.appendChild(
-        actionBtn(a.label, (e) => {
-          det.open = false;
-          a.fn(e);
-        }, { danger: !!a.danger, disabled: !!a.disabled })
+      });
+      probe.appendChild(b);
+      return b.getBoundingClientRect().width || b.offsetWidth || 48;
+    });
+    // also measure 更多
+    const moreProbe = document.createElement("button");
+    moreProbe.className = "btn small";
+    moreProbe.textContent = "更多";
+    probe.appendChild(moreProbe);
+    const moreW = moreProbe.getBoundingClientRect().width || ACTION_MORE_BTN_W;
+    document.body.removeChild(probe);
+    return { widths, moreW };
+  };
+
+  const fitCount = (avail, widths, moreW) => {
+    if (!widths.length) return 0;
+    const gap = ACTION_GAP_PX;
+    const sumAll = widths.reduce((s, w, i) => s + w + (i ? gap : 0), 0);
+    const ceiling = Math.min(hardMax, widths.length);
+    if (sumAll <= avail && widths.length <= hardMax) return widths.length;
+    // leave room for 「更多」 when not all fit
+    let used = 0;
+    let n = 0;
+    for (let i = 0; i < ceiling; i++) {
+      const w = widths[i] + (i ? gap : 0);
+      const remaining = widths.length - (i + 1);
+      const needMore = remaining > 0 || i + 1 < widths.length ? moreW + gap : 0;
+      // if taking this button still leaves room for 更多 (if anything left) or is last
+      const isLastPossible = i + 1 === widths.length;
+      if (isLastPossible) {
+        if (used + w <= avail) n = i + 1;
+        break;
+      }
+      if (used + w + needMore <= avail + 0.5) {
+        used += w;
+        n = i + 1;
+      } else {
+        break;
+      }
+    }
+    return Math.max(n, Math.min(1, ceiling)); // always show at least 1 if any
+  };
+
+  const render = () => {
+    const avail = Math.max(0, host.clientWidth || host.getBoundingClientRect().width || 0);
+    // if host not laid out yet, show all up to hardMax then reflow
+    const { widths, moreW } = measureWidths();
+    let n =
+      avail > 8
+        ? fitCount(avail, widths, moreW)
+        : Math.min(hardMax, widths.length);
+    n = Math.min(n, hardMax, all.length);
+    if (n < 1 && all.length) n = 1;
+
+    // if everything fits without 更多, use full list
+    const sumAll = widths.reduce((s, w, i) => s + w + (i ? ACTION_GAP_PX : 0), 0);
+    if (sumAll <= avail && all.length <= hardMax) n = all.length;
+
+    const shown = all.slice(0, n);
+    const extra = all.slice(n);
+    group.innerHTML = "";
+    shown.forEach((a) => {
+      group.appendChild(
+        actionBtn(a.label, a.fn, {
+          danger: !!a.danger,
+          disabled: !!a.disabled,
+          primary: !!a.primary,
+        })
       );
     });
-    det.appendChild(panel);
-    det.addEventListener("toggle", () => {
-      if (!det.open) return;
-      document.querySelectorAll("details.action-menu[open]").forEach((d) => {
-        if (d !== det) d.open = false;
+    if (extra.length) {
+      const det = document.createElement("details");
+      det.className = "action-menu";
+      const sum = document.createElement("summary");
+      sum.className = "btn small";
+      sum.textContent = "更多";
+      sum.title = `更多操作（${extra.length}）`;
+      det.appendChild(sum);
+      const panel = document.createElement("div");
+      panel.className = "action-menu-panel";
+      extra.forEach((a) => {
+        panel.appendChild(
+          actionBtn(
+            a.label,
+            (e) => {
+              det.open = false;
+              a.fn(e);
+            },
+            { danger: !!a.danger, disabled: !!a.disabled }
+          )
+        );
       });
+      det.appendChild(panel);
+      det.addEventListener("toggle", () => {
+        if (!det.open) return;
+        document.querySelectorAll("details.action-menu[open]").forEach((d) => {
+          if (d !== det) d.open = false;
+        });
+      });
+      group.appendChild(det);
+    }
+  };
+
+  render();
+  // second pass after layout (table col may still be 0 on first paint)
+  requestAnimationFrame(() => {
+    render();
+    requestAnimationFrame(render);
+  });
+  if (typeof ResizeObserver !== "undefined") {
+    let t = 0;
+    const ro = new ResizeObserver(() => {
+      cancelAnimationFrame(t);
+      t = requestAnimationFrame(render);
     });
-    group.appendChild(det);
+    ro.observe(host);
+    host._actionRo = ro;
   }
-  host.appendChild(group);
 }
 
 function setSidebarOpen(open) {
@@ -631,7 +749,7 @@ function renderContainers() {
     const actions = tr.querySelector(".actions");
     const running = (c.status || "").toLowerCase() === "running";
     const paused = (c.status || "").toLowerCase() === "paused";
-    // Primary (desktop ≤4): 启停 · 重启 · 日志 · 更新|终端|详情
+    // Preferred order — width-fit decides what stays out vs 「更多」
     const primary = [];
     if (!running && !paused) primary.push({ label: "启动", fn: () => doLife(id, "start") });
     else if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
@@ -640,21 +758,12 @@ function renderContainers() {
     primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
     if (upd && upd.update_available) {
       primary.push({ label: "更新", fn: () => doUpdate(id), primary: true });
-    } else if (running && state.consoleEnabled) {
-      primary.push({ label: "终端", fn: () => openConsole(id, c.name) });
-    } else {
-      primary.push({ label: "详情", fn: () => showDetail(id, c.name) });
     }
+    if (running && state.consoleEnabled) {
+      primary.push({ label: "终端", fn: () => openConsole(id, c.name) });
+    }
+    primary.push({ label: "详情", fn: () => showDetail(id, c.name) });
     const more = [
-      {
-        label: "终端",
-        fn: () => openConsole(id, c.name),
-        disabled: !state.consoleEnabled || !running,
-      },
-      // avoid duplicate if already primary
-      !(upd && upd.update_available) && !(running && state.consoleEnabled)
-        ? null
-        : { label: "详情", fn: () => showDetail(id, c.name) },
       running ? { label: "暂停", fn: () => doLife(id, "pause") } : null,
       running ? { label: "强制停止", fn: () => doLife(id, "kill"), danger: true } : null,
       { label: "重命名", fn: () => doRename(id, c.name) },
@@ -666,14 +775,7 @@ function renderContainers() {
         : null,
       { label: "删除", fn: () => doRemove(id), danger: true, disabled: !state.takeover },
     ];
-    // Deduplicate 终端 if already in primary
-    const moreFiltered = more.filter((a) => {
-      if (!a) return false;
-      if (a.label === "终端" && primary.some((p) => p.label === "终端")) return false;
-      if (a.label === "详情" && primary.some((p) => p.label === "详情")) return false;
-      return true;
-    });
-    fillActionGroup(actions, primary, moreFiltered);
+    fillActionGroup(actions, primary, more);
     tbody.appendChild(tr);
   });
   if (!items.length) {
@@ -716,11 +818,9 @@ function renderCompose() {
         { label: "更新", fn: () => doComposeUpdate(p.name) },
         { label: "Up", fn: () => doComposeUp(p.name), disabled: !state.takeover },
         { label: "备份", fn: () => doComposeBackup(p.name) },
-      ],
-      [
         { label: "Down", fn: () => doComposeDown(p.name), danger: true, disabled: !state.takeover },
       ],
-      { maxPrimary: actionMaxPrimary(3) }
+      []
     );
     cbody.appendChild(tr);
   });
@@ -756,8 +856,7 @@ function renderUnraid() {
         { label: "模板更新", fn: () => doUnraidUpdate(n) },
         { label: "备份", fn: () => doUnraidBackup(n) },
       ],
-      [],
-      { maxPrimary: actionMaxPrimary(2) }
+      []
     );
     ubody.appendChild(tr);
   });
@@ -804,8 +903,7 @@ function renderUpdates() {
           { label: "日志", fn: () => showLogs(u.id, u.name) },
           { label: "详情", fn: () => showDetail(u.id, u.name) },
         ],
-        [],
-        { maxPrimary: actionMaxPrimary(3) }
+        []
       );
     }
     body.appendChild(tr);
@@ -1391,8 +1489,7 @@ function renderNetworks() {
           disabled: !state.takeover || protectedNet,
         },
       ],
-      [],
-      { maxPrimary: 1 }
+      []
     );
     body.appendChild(tr);
   });
@@ -1417,8 +1514,7 @@ function renderVolumes() {
     fillActionGroup(
       tr.querySelector(".actions"),
       [{ label: "删除", fn: () => doVolRemove(v.name), danger: true, disabled: !state.takeover }],
-      [],
-      { maxPrimary: 1 }
+      []
     );
     body.appendChild(tr);
   });
