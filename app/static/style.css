@@ -538,59 +538,90 @@ a { color: var(--cyan); }
   overflow-y: visible;
   -webkit-overflow-scrolling: touch;
   max-width: 100%;
+  width: 100%;
 }
+/* Resource tables: fixed layout with explicit colgroup; no forced 100% min-width bloat */
 table.data-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
   table-layout: fixed;
 }
-/* default tables: auto layout so actions aren't crushed */
 table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 0.88rem;
+  font-size: 0.86rem;
+  table-layout: fixed;
 }
 th, td {
   text-align: left;
-  padding: 0.55rem 0.4rem;
+  padding: 0.48rem 0.45rem;
   border-bottom: 1px solid var(--border);
   vertical-align: middle;
 }
-/* only clip text cells, never action cells */
+/* Flexible text columns: ellipsis, never wrap into multi-line walls */
 td.cell-text,
 th.cell-text {
   overflow: hidden;
-  max-width: 0; /* force ellipsis inside fixed tables */
+  min-width: 0;
+}
+/* Global mono uses pre-wrap for logs; table cells must stay single-line */
+table .mono,
+td.mono,
+th.mono,
+table .mono .cell-clip,
+td .mono {
+  white-space: nowrap !important;
+  word-break: normal !important;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cell-clip {
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
+  white-space: nowrap !important;
   max-width: 100%;
   display: block;
+  min-width: 0;
 }
-td.col-check { width: 2.2rem; text-align: center; }
-td.col-status { width: 5.5rem; white-space: nowrap; }
-td.col-health { width: 5rem; white-space: nowrap; }
-td.col-num { width: 3.5rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
-td.col-size { width: 5.5rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
-td.col-date { width: 8.5rem; white-space: nowrap; }
-td.col-used { width: 4.5rem; white-space: nowrap; }
-td.col-id { width: 7rem; }
-td.col-mgr { width: 6.5rem; }
-td.col-actions {
-  width: 11.5rem;
+/* Compact fixed columns — tight to content, avoid large trailing blanks */
+td.col-check,
+th.col-check { width: 2rem; text-align: center; padding-left: 0.35rem; padding-right: 0.2rem; }
+td.col-status,
+th.col-status { width: 5rem; white-space: nowrap; }
+td.col-health,
+th.col-health { width: 4.5rem; white-space: nowrap; }
+td.col-num,
+th.col-num { width: 3rem; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+td.col-size,
+th.col-size { width: 4.8rem; white-space: nowrap; font-variant-numeric: tabular-nums; text-align: right; }
+td.col-date,
+th.col-date { width: 7.2rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+td.col-used,
+th.col-used { width: 3.2rem; white-space: nowrap; text-align: center; }
+td.col-id,
+th.col-id { width: 5.8rem; white-space: nowrap; }
+td.col-mgr,
+th.col-mgr { width: 5.6rem; white-space: nowrap; }
+td.col-run,
+th.col-run { width: 4rem; white-space: nowrap; text-align: center; }
+/* Actions: fixed narrow strip, never wraps / never clips menus */
+td.col-actions,
+th.col-actions {
+  width: 8.75rem;
   overflow: visible !important;
   vertical-align: middle;
   white-space: nowrap;
+  text-align: right;
+  padding-right: 0.55rem;
 }
 .tag-list {
   display: flex;
   flex-direction: column;
-  gap: 0.12rem;
+  gap: 0.1rem;
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
 }
 .tag-list .tag-main {
   font-weight: 600;
@@ -611,6 +642,7 @@ td.col-actions {
 .img-name-cell {
   min-width: 0;
   max-width: 100%;
+  overflow: hidden;
 }
 .img-name-cell .img-repo {
   font-weight: 600;
@@ -622,6 +654,9 @@ td.col-actions {
   color: var(--cyan);
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 0.8rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .badge-dangling {
   display: inline-block;
@@ -790,24 +825,31 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  gap: 0.28rem;
+  justify-content: flex-end;
+  gap: 0.22rem;
   min-width: 0;
+  width: 100%;
 }
 .actions .btn.small {
   flex: 0 0 auto;
   white-space: nowrap;
+  padding: 0.2rem 0.42rem;
+  font-size: 0.76rem;
 }
 /* Primary row actions + overflow menu (prevents page split from many buttons) */
 .action-group {
   display: inline-flex;
   align-items: center;
-  gap: 0.28rem;
+  justify-content: flex-end;
+  gap: 0.22rem;
   position: relative;
   flex-wrap: nowrap;
+  max-width: 100%;
 }
 .action-menu {
   position: relative;
   display: inline-flex;
+  flex: 0 0 auto;
 }
 .action-menu > summary {
   list-style: none;
@@ -817,7 +859,7 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
 .action-menu > summary::-webkit-details-marker { display: none; }
 .action-menu > summary.btn {
   min-width: 2rem;
-  padding: 0.22rem 0.45rem;
+  padding: 0.2rem 0.4rem;
 }
 .action-menu[open] > summary {
   border-color: rgba(108, 92, 231, 0.55);
@@ -827,16 +869,22 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
   position: absolute;
   right: 0;
   top: calc(100% + 4px);
-  z-index: 40;
-  min-width: 9.5rem;
-  padding: 0.3rem;
+  z-index: 60;
+  min-width: 8.5rem;
+  max-width: 12rem;
+  padding: 0.28rem;
   border-radius: 10px;
   border: 1px solid var(--border);
-  background: rgba(14, 18, 28, 0.96);
+  background: rgba(14, 18, 28, 0.98);
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
   display: flex;
   flex-direction: column;
-  gap: 0.15rem;
+  gap: 0.12rem;
+}
+/* Last few rows open menu upward so it isn't clipped by page end */
+tbody tr:nth-last-child(-n+3) .action-menu-panel {
+  top: auto;
+  bottom: calc(100% + 4px);
 }
 .action-menu-panel .btn {
   width: 100%;
@@ -845,34 +893,33 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
   white-space: nowrap;
 }
 .action-menu-panel .btn.danger {
-  margin-top: 0.15rem;
+  margin-top: 0.12rem;
 }
-/* Images table: cleaner Portainer-like density */
-table.images-table {
-  table-layout: fixed;
-  width: 100%;
-  min-width: 720px;
+/* Per-table action width (1 primary + 更多 ≈ 8.5–9rem) */
+table.images-table th.col-actions,
+table.images-table td.col-actions { width: 7.5rem; }
+table.containers-table th.col-actions,
+table.containers-table td.col-actions { width: 8.75rem; }
+table.updates-table th.col-actions,
+table.updates-table td.col-actions { width: 7.5rem; }
+table.compose-table th.col-actions,
+table.compose-table td.col-actions,
+table.unraid-table th.col-actions,
+table.unraid-table td.col-actions,
+table.networks-table th.col-actions,
+table.networks-table td.col-actions,
+table.volumes-table th.col-actions,
+table.volumes-table td.col-actions { width: 8.5rem; }
+/* Name cell: badge + id stay on one visual block without blowing width */
+td.cell-text strong.cell-clip {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: bottom;
 }
-table.images-table th,
-table.images-table td {
+td.cell-text .pill {
   vertical-align: middle;
+  margin-left: 0.2rem;
 }
-table.images-table td.col-actions {
-  width: 7.5rem;
-}
-table.containers-table {
-  table-layout: fixed;
-  width: 100%;
-  min-width: 860px;
-}
-table.containers-table td.col-actions {
-  width: 12rem;
-}
-table.containers-table td.col-check { width: 2.2rem; }
-table.containers-table td.col-mgr { width: 6.2rem; }
-table.containers-table td.col-status { width: 5.2rem; }
-table.containers-table td.col-health { width: 4.8rem; }
-table.containers-table td.col-num { width: 3.2rem; }
 
 .quick-actions {
   display: flex;

@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.6",
+  version: "0.4.7",
   tab: "overview",
   needsSetup: false,
   usernames: [],
@@ -314,19 +314,24 @@ function actionBtn(text, fn, { danger = false, disabled = false, primary = false
 }
 
 /**
- * Compact actions: a few primary buttons + "更多" dropdown.
- * Prevents the 操作 column from wrapping and splitting the table layout.
+ * Compact actions: at most 2 primary buttons + "更多" dropdown.
+ * Keeps the 操作 column a fixed narrow strip so tables don't split mid-row.
  * @param {HTMLElement} host
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean, primary?:boolean}[]} primary
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean}[]} [more]
+ * @param {{maxPrimary?:number}} [opts]
  */
-function fillActionGroup(host, primary, more = []) {
-  host.classList.add("actions");
+function fillActionGroup(host, primary, more = [], opts = {}) {
+  host.classList.add("actions", "col-actions");
   host.innerHTML = "";
+  const maxPrimary = opts.maxPrimary ?? 2;
+  const allPrimary = (primary || []).filter(Boolean);
+  const shown = allPrimary.slice(0, maxPrimary);
+  const overflow = allPrimary.slice(maxPrimary);
+  const extra = [...overflow, ...(more || []).filter(Boolean)];
   const group = document.createElement("div");
   group.className = "action-group";
-  primary.forEach((a) => {
-    if (!a) return;
+  shown.forEach((a) => {
     group.appendChild(
       actionBtn(a.label, a.fn, {
         danger: !!a.danger,
@@ -335,7 +340,6 @@ function fillActionGroup(host, primary, more = []) {
       })
     );
   });
-  const extra = (more || []).filter(Boolean);
   if (extra.length) {
     const det = document.createElement("details");
     det.className = "action-menu";
@@ -355,7 +359,6 @@ function fillActionGroup(host, primary, more = []) {
       );
     });
     det.appendChild(panel);
-    // close other menus when opening
     det.addEventListener("toggle", () => {
       if (!det.open) return;
       document.querySelectorAll("details.action-menu[open]").forEach((d) => {
@@ -597,18 +600,19 @@ function renderContainers() {
     const actions = tr.querySelector(".actions");
     const running = (c.status || "").toLowerCase() === "running";
     const paused = (c.status || "").toLowerCase() === "paused";
+    // At most 2 primary: lifecycle + (更新|日志); rest in 更多 — avoids 操作列撑裂
     const primary = [];
     if (!running && !paused) primary.push({ label: "启动", fn: () => doLife(id, "start") });
-    if (running) {
-      primary.push({ label: "停止", fn: () => doLife(id, "stop") });
-      primary.push({ label: "重启", fn: () => doLife(id, "restart") });
-    }
-    if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
-    primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
+    else if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
+    else primary.push({ label: "停止", fn: () => doLife(id, "stop") });
     if (upd && upd.update_available) {
       primary.push({ label: "更新", fn: () => doUpdate(id), primary: true });
+    } else {
+      primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
     }
     const more = [
+      running ? { label: "重启", fn: () => doLife(id, "restart") } : null,
+      upd && upd.update_available ? { label: "日志", fn: () => showLogs(id, c.name) } : null,
       { label: "详情", fn: () => showDetail(id, c.name) },
       running ? { label: "暂停", fn: () => doLife(id, "pause") } : null,
       { label: "重命名", fn: () => doRename(id, c.name) },
@@ -620,7 +624,7 @@ function renderContainers() {
         : null,
       { label: "删除", fn: () => doRemove(id), danger: true, disabled: !state.takeover },
     ];
-    fillActionGroup(actions, primary, more);
+    fillActionGroup(actions, primary, more, { maxPrimary: 2 });
     tbody.appendChild(tr);
   });
   if (!items.length) {
@@ -666,7 +670,8 @@ function renderCompose() {
       [
         { label: "备份", fn: () => doComposeBackup(p.name) },
         { label: "Down", fn: () => doComposeDown(p.name), danger: true, disabled: !state.takeover },
-      ]
+      ],
+      { maxPrimary: 2 }
     );
     cbody.appendChild(tr);
   });
@@ -699,7 +704,8 @@ function renderUnraid() {
     fillActionGroup(
       tr.querySelector(".actions"),
       [{ label: "模板更新", fn: () => doUnraidUpdate(n) }],
-      [{ label: "备份", fn: () => doUnraidBackup(n) }]
+      [{ label: "备份", fn: () => doUnraidBackup(n) }],
+      { maxPrimary: 1 }
     );
     ubody.appendChild(tr);
   });
@@ -744,7 +750,8 @@ function renderUpdates() {
       fillActionGroup(
         tr.querySelector(".actions"),
         [{ label: u.update_available ? "更新" : "安全更新", fn: () => doUpdate(u.id), primary: !!u.update_available }],
-        [{ label: "日志", fn: () => showLogs(u.id, u.name) }]
+        [{ label: "日志", fn: () => showLogs(u.id, u.name) }],
+        { maxPrimary: 1 }
       );
     }
     body.appendChild(tr);
@@ -1037,11 +1044,11 @@ async function loadAll() {
     (ops.items || []).forEach((r) => {
       const tr = document.createElement("tr");
       tr.innerHTML = `
-        <td>${escapeHtml(fmtTime(r.created_at))}</td>
-        <td>${escapeHtml(r.action || "")}</td>
-        <td>${escapeHtml(r.target || "-")}</td>
-        <td>${escapeHtml(r.status || "")}</td>
-        <td>${escapeHtml(r.actor || "-")}</td>
+        <td class="col-date mono small">${escapeHtml(fmtTime(r.created_at))}</td>
+        <td class="cell-text"><span class="cell-clip" title="${escapeHtml(r.action || "")}">${escapeHtml(r.action || "")}</span></td>
+        <td class="cell-text"><span class="cell-clip" title="${escapeHtml(r.target || "-")}">${escapeHtml(r.target || "-")}</span></td>
+        <td class="col-status">${escapeHtml(r.status || "")}</td>
+        <td class="cell-text"><span class="cell-clip">${escapeHtml(r.actor || "-")}</span></td>
       `;
       opsBody.appendChild(tr);
     });
@@ -1257,7 +1264,8 @@ function renderImages() {
     fillActionGroup(
       actions,
       [{ label: "历史", fn: () => showImageHistory(ref) }],
-      [{ label: "删除", fn: () => doImageRemove(ref), danger: true, disabled: !state.takeover }]
+      [{ label: "删除", fn: () => doImageRemove(ref), danger: true, disabled: !state.takeover }],
+      { maxPrimary: 1 }
     );
     body.appendChild(tr);
   });
@@ -1290,14 +1298,19 @@ function renderNetworks() {
       <td class="col-actions actions"></td>
     `;
     const protectedNet = ["bridge", "host", "none"].includes(n.name);
-    fillActionGroup(tr.querySelector(".actions"), [
-      {
-        label: "删除",
-        fn: () => doNetRemove(n.id || n.name),
-        danger: true,
-        disabled: !state.takeover || protectedNet,
-      },
-    ]);
+    fillActionGroup(
+      tr.querySelector(".actions"),
+      [
+        {
+          label: "删除",
+          fn: () => doNetRemove(n.id || n.name),
+          danger: true,
+          disabled: !state.takeover || protectedNet,
+        },
+      ],
+      [],
+      { maxPrimary: 1 }
+    );
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="5" class="muted">无网络</td></tr>`;
@@ -1318,9 +1331,12 @@ function renderVolumes() {
       <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(v.mountpoint || "")}">${escapeHtml(v.mountpoint || "-")}</span></td>
       <td class="col-actions actions"></td>
     `;
-    fillActionGroup(tr.querySelector(".actions"), [
-      { label: "删除", fn: () => doVolRemove(v.name), danger: true, disabled: !state.takeover },
-    ]);
+    fillActionGroup(
+      tr.querySelector(".actions"),
+      [{ label: "删除", fn: () => doVolRemove(v.name), danger: true, disabled: !state.takeover }],
+      [],
+      { maxPrimary: 1 }
+    );
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="4" class="muted">无命名卷（Unraid 多为 bind mount）</td></tr>`;
@@ -2156,7 +2172,7 @@ if (!state.token) {
   lockAuthGate("login");
 }
 loadAll();
-setInterval(loadAll, 60000);
+// 取消自动刷新：仅顶部「刷新」按钮或操作后手动 loadAll
 
 // close action menus when clicking outside
 document.addEventListener("click", (e) => {

@@ -57,7 +57,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.4.6 · —
+        v0.4.7 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -185,14 +185,21 @@
         <section class="card wide tab-panel" data-panel="overview">
           <div class="card-head"><h2>运维记录</h2></div>
           <div class="table-wrap">
-            <table>
+            <table class="data-table ops-table">
+              <colgroup>
+                <col class="col-date" style="width:9rem" />
+                <col style="width:18%" />
+                <col />
+                <col class="col-status" style="width:5rem" />
+                <col style="width:8rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>时间</th>
-                  <th>动作</th>
-                  <th>目标</th>
-                  <th>状态</th>
-                  <th>操作者</th>
+                  <th class="col-date">时间</th>
+                  <th class="cell-text">动作</th>
+                  <th class="cell-text">目标</th>
+                  <th class="col-status">状态</th>
+                  <th class="cell-text">操作者</th>
                 </tr>
               </thead>
               <tbody id="ops-rows">
@@ -238,25 +245,25 @@
           <div class="table-wrap">
             <table class="containers-table data-table">
               <colgroup>
-                <col style="width:2.2rem" />
-                <col style="width:16%" />
-                <col style="width:6.2rem" />
+                <col class="col-check" style="width:2rem" />
+                <col style="width:18%" />
+                <col class="col-mgr" style="width:5.6rem" />
                 <col />
-                <col style="width:5.2rem" />
-                <col style="width:4.8rem" />
-                <col style="width:3.2rem" />
-                <col style="width:12rem" />
+                <col class="col-status" style="width:5rem" />
+                <col class="col-health" style="width:4.5rem" />
+                <col class="col-num" style="width:3rem" />
+                <col class="col-actions" style="width:8.75rem" />
               </colgroup>
               <thead>
                 <tr>
-                  <th></th>
-                  <th>名称</th>
-                  <th>管理源</th>
-                  <th>镜像</th>
-                  <th>状态</th>
-                  <th>健康</th>
-                  <th>重启</th>
-                  <th>操作</th>
+                  <th class="col-check"></th>
+                  <th class="cell-text">名称</th>
+                  <th class="col-mgr">管理源</th>
+                  <th class="cell-text">镜像</th>
+                  <th class="col-status">状态</th>
+                  <th class="col-health">健康</th>
+                  <th class="col-num">重启</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="container-rows">
@@ -284,23 +291,23 @@
           <div class="table-wrap">
             <table class="data-table updates-table">
               <colgroup>
-                <col style="width:2.2rem" />
+                <col class="col-check" style="width:2rem" />
                 <col style="width:16%" />
-                <col style="width:6.2rem" />
+                <col class="col-mgr" style="width:5.6rem" />
                 <col />
-                <col style="width:5.2rem" />
-                <col style="width:18%" />
-                <col style="width:8rem" />
+                <col class="col-status" style="width:5rem" />
+                <col style="width:14%" />
+                <col class="col-actions" style="width:7.5rem" />
               </colgroup>
               <thead>
                 <tr>
-                  <th><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
-                  <th>容器</th>
-                  <th>管理源</th>
-                  <th>镜像</th>
-                  <th>状态</th>
-                  <th>检测结果</th>
-                  <th>操作</th>
+                  <th class="col-check"><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
+                  <th class="cell-text">容器</th>
+                  <th class="col-mgr">管理源</th>
+                  <th class="cell-text">镜像</th>
+                  <th class="col-status">状态</th>
+                  <th class="cell-text">检测结果</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="update-rows">
@@ -320,14 +327,21 @@
             <input type="search" id="compose-filter" class="input" placeholder="搜索项目…" />
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="compose-table data-table">
+              <colgroup>
+                <col style="width:18%" />
+                <col style="width:22%" />
+                <col class="col-run" style="width:4rem" />
+                <col />
+                <col class="col-actions" style="width:8.5rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>项目</th>
-                  <th>服务</th>
-                  <th>运行</th>
-                  <th>目录 / 文件</th>
-                  <th>操作</th>
+                  <th class="cell-text">项目</th>
+                  <th class="cell-text">服务</th>
+                  <th class="col-run">运行</th>
+                  <th class="cell-text">目录</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="compose-rows">
@@ -347,14 +361,21 @@
             <input type="search" id="unraid-filter" class="input" placeholder="搜索模板…" />
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="unraid-table data-table">
+              <colgroup>
+                <col style="width:20%" />
+                <col />
+                <col class="col-status" style="width:6rem" />
+                <col class="col-status" style="width:5.5rem" />
+                <col class="col-actions" style="width:8.5rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>Repository</th>
-                  <th>网络</th>
-                  <th>容器状态</th>
-                  <th>操作</th>
+                  <th class="cell-text">名称</th>
+                  <th class="cell-text">Repository</th>
+                  <th class="col-status">网络</th>
+                  <th class="col-status">状态</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="unraid-rows">
@@ -389,23 +410,23 @@
           <div class="table-wrap">
             <table class="images-table data-table">
               <colgroup>
-                <col style="width:2.2rem" />
+                <col class="col-check" style="width:2rem" />
                 <col />
-                <col style="width:7rem" />
-                <col style="width:5.5rem" />
-                <col style="width:8.5rem" />
-                <col style="width:4.5rem" />
-                <col style="width:7.5rem" />
+                <col class="col-id" style="width:5.8rem" />
+                <col class="col-size" style="width:4.8rem" />
+                <col class="col-date" style="width:7.2rem" />
+                <col class="col-used" style="width:3.2rem" />
+                <col class="col-actions" style="width:7.5rem" />
               </colgroup>
               <thead>
                 <tr>
-                  <th><input type="checkbox" id="img-check-all" title="全选" /></th>
-                  <th>镜像</th>
-                  <th>ID</th>
-                  <th>大小</th>
-                  <th>创建</th>
-                  <th>占用</th>
-                  <th>操作</th>
+                  <th class="col-check"><input type="checkbox" id="img-check-all" title="全选" /></th>
+                  <th class="cell-text">镜像</th>
+                  <th class="col-id">ID</th>
+                  <th class="col-size">大小</th>
+                  <th class="col-date">创建</th>
+                  <th class="col-used">占用</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="image-rows">
@@ -428,14 +449,21 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="networks-table data-table">
+              <colgroup>
+                <col style="width:22%" />
+                <col class="col-status" style="width:5.5rem" />
+                <col />
+                <col class="col-num" style="width:4rem" />
+                <col class="col-actions" style="width:8.5rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>驱动</th>
-                  <th>子网</th>
-                  <th>容器数</th>
-                  <th>操作</th>
+                  <th class="cell-text">名称</th>
+                  <th class="col-status">驱动</th>
+                  <th class="cell-text">子网</th>
+                  <th class="col-num">容器</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="network-rows">
@@ -459,13 +487,19 @@
             </div>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="volumes-table data-table">
+              <colgroup>
+                <col style="width:28%" />
+                <col class="col-status" style="width:5.5rem" />
+                <col />
+                <col class="col-actions" style="width:8.5rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th>名称</th>
-                  <th>驱动</th>
-                  <th>挂载点</th>
-                  <th>操作</th>
+                  <th class="cell-text">名称</th>
+                  <th class="col-status">驱动</th>
+                  <th class="cell-text">挂载点</th>
+                  <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="volume-rows">
@@ -618,7 +652,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.4.6</span> ·
+        DockerOps <span id="foot-version">v0.4.7</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
