@@ -4,7 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.4.9') }}" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.5.0') }}" />
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.5.0') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -57,7 +58,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.4.9 · —
+        v0.5.0 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -652,7 +653,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.4.9</span> ·
+        DockerOps <span id="foot-version">v0.5.0</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -703,6 +704,19 @@
       <h3 id="logs-title">容器日志</h3>
       <button type="button" class="btn small" id="logs-close">关闭</button>
     </div>
+    <div class="logs-toolbar">
+      <label class="chk"><input type="checkbox" id="logs-follow" checked /> 实时跟随</label>
+      <label class="chk"><input type="checkbox" id="logs-timestamps" checked /> 时间戳</label>
+      <select id="logs-tail" class="select" title="初始行数">
+        <option value="100">尾 100 行</option>
+        <option value="300" selected>尾 300 行</option>
+        <option value="500">尾 500 行</option>
+      </select>
+      <button type="button" class="btn small" id="logs-pause">暂停</button>
+      <button type="button" class="btn small" id="logs-clear">清空</button>
+      <button type="button" class="btn small" id="logs-reload">重新加载</button>
+      <span id="logs-status" class="muted small"></span>
+    </div>
     <pre id="logs-body" class="mono logs-body">…</pre>
   </dialog>
 
@@ -711,10 +725,33 @@
       <h3 id="detail-title">容器详情</h3>
       <button type="button" class="btn small" id="detail-close">关闭</button>
     </div>
+    <div id="detail-actions" class="detail-actions"></div>
     <div id="detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/particles.js?v={{ asset_v|default('0.4.9') }}"></script>
-  <script src="/static/app.js?v={{ asset_v|default('0.4.9') }}"></script>
+  <dialog id="console-dialog" class="console-dialog">
+    <div class="row-between">
+      <h3 id="console-title">容器终端</h3>
+      <button type="button" class="btn small" id="console-close">关闭</button>
+    </div>
+    <div class="console-toolbar">
+      <label class="muted small">Shell
+        <select id="console-shell" class="select">
+          <option value="sh">/bin/sh</option>
+          <option value="bash">/bin/bash</option>
+          <option value="ash">/bin/ash</option>
+        </select>
+      </label>
+      <button type="button" class="btn small" id="console-reconnect">重连</button>
+      <button type="button" class="btn small" id="console-clear">清屏</button>
+      <span id="console-status" class="muted small">未连接</span>
+    </div>
+    <div id="console-term" class="console-term"></div>
+  </dialog>
+
+  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.5.0') }}"></script>
+  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.5.0') }}"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.5.0') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.5.0') }}"></script>
 </body>
 </html>

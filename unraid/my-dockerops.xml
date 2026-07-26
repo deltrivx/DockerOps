@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DockerOps</Name>
-  <Repository>ghcr.io/deltrivx/dockerops:0.4.9</Repository>
+  <Repository>ghcr.io/deltrivx/dockerops:0.5.0</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.4.9 — 镜像表百分比列宽防竖排；代理写入 SQLite 并在启动恢复（env 锁定仅认容器启动变量）；静态资源缓存破坏。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.5.0 — Web 终端/实时日志/详情增强/网络连接；移动端藏列。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>
@@ -31,7 +31,7 @@
   <Config Name="Takeover Enabled" Target="DOCKEROPS_TAKEOVER_ENABLED" Default="false" Mode="" Description="true=完整接管（compose up/down、模板重建、Adopt、删除/prune）" Type="Variable" Display="always" Required="false" Mask="false">true</Config>
   <Config Name="Platform" Target="DOCKEROPS_PLATFORM" Default="unraid" Mode="" Description="auto|unraid|fnos|generic" Type="Variable" Display="advanced" Required="false" Mask="false">unraid</Config>
   <Config Name="Resource APIs" Target="DOCKEROPS_RESOURCE_APIS" Default="true" Mode="" Description="启停/日志/镜像/网络/卷等日常运维 API" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
-  <Config Name="Console Enabled" Target="DOCKEROPS_CONSOLE_ENABLED" Default="false" Mode="" Description="Web 终端（高风险，默认关）" Type="Variable" Display="advanced" Required="false" Mask="false">false</Config>
+  <Config Name="Console Enabled" Target="DOCKEROPS_CONSOLE_ENABLED" Default="true" Mode="" Description="Web 终端 docker exec（高权限，生产可关）" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
   <Config Name="Compose Enabled" Target="DOCKEROPS_COMPOSE_ENABLED" Default="true" Mode="" Description="启用 Compose 项目发现" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>
   <Config Name="Compose Project Dirs" Target="DOCKEROPS_COMPOSE_PROJECT_DIRS" Default="/host/appdata" Mode="" Description="额外扫描的 compose 目录，容器内路径，冒号分隔" Type="Variable" Display="advanced" Required="false" Mask="false">/host/appdata</Config>
   <Config Name="Unraid Enabled" Target="DOCKEROPS_UNRAID_ENABLED" Default="true" Mode="" Description="启用 Unraid 模板管理" Type="Variable" Display="advanced" Required="false" Mask="false">true</Config>

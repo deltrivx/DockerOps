@@ -227,20 +227,29 @@ def logout(token: str) -> None:
         audit("logout", actor=sess.get("username"))
 
 
+def actor_from_token(token: str | None) -> str | None:
+    """Resolve username from raw bearer token string (header or query)."""
+    if not token:
+        return None
+    t = token.strip()
+    if not t:
+        return None
+    settings = get_settings()
+    if settings.api_token and t == settings.api_token:
+        return "api-token"
+    sess = get_session(t)
+    if sess:
+        return sess["username"]
+    return None
+
+
 def resolve_actor(
     creds: Annotated[HTTPAuthorizationCredentials | None, Security(bearer)],
 ) -> str | None:
     """Optional auth: returns username if valid, else None."""
-    settings = get_settings()
     if not creds:
         return None
-    token = creds.credentials
-    if settings.api_token and token == settings.api_token:
-        return "api-token"
-    sess = get_session(token)
-    if sess:
-        return sess["username"]
-    return None
+    return actor_from_token(creds.credentials)
 
 
 def require_auth(

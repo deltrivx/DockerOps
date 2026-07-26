@@ -102,10 +102,91 @@ def create_and_start(run_kwargs: dict[str, Any], start: bool = True) -> dict[str
     return _detail(cont, _template_names())
 
 
-def connect_network(container_id: str, network: str) -> None:
+def connect_network(container_id: str, network: str, aliases: list[str] | None = None) -> dict[str, Any]:
     c = get_client()
     net = c.networks.get(network)
-    net.connect(container_id)
+    kwargs: dict[str, Any] = {}
+    if aliases:
+        kwargs["aliases"] = aliases
+    net.connect(container_id, **kwargs)
+    return {"ok": True, "container": container_id, "network": network, "action": "connect"}
+
+
+def disconnect_network(container_id: str, network: str, force: bool = False) -> dict[str, Any]:
+    c = get_client()
+    net = c.networks.get(network)
+    net.disconnect(container_id, force=force)
+    return {"ok": True, "container": container_id, "network": network, "action": "disconnect"}
+
+
+def exec_create(
+    container_id: str,
+    *,
+    cmd: list[str] | str,
+    user: str = "",
+    tty: bool = True,
+    stdin: bool = True,
+    stdout: bool = True,
+    stderr: bool = True,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """Create an interactive exec instance (docker exec). Returns {Id: ...}."""
+    cont = _get_cont(container_id)
+    if cont.status not in ("running", "paused"):
+        raise RuntimeError(f"容器未运行（status={cont.status}），无法打开终端")
+    c = get_client()
+    kwargs: dict[str, Any] = {
+        "container": cont.id,
+        "cmd": cmd,
+        "stdout": stdout,
+        "stderr": stderr,
+        "stdin": stdin,
+        "tty": tty,
+        "privileged": False,
+    }
+    if user:
+        kwargs["user"] = user
+    if env:
+        kwargs["environment"] = env
+    return c.api.exec_create(**kwargs)
+
+
+def exec_resize(exec_id: str, height: int = 24, width: int = 80) -> None:
+    c = get_client()
+    c.api.exec_resize(exec_id, height=max(1, int(height)), width=max(1, int(width)))
+
+
+def exec_start_socket(exec_id: str):
+    """
+    Start exec with socket=True for bidirectional TTY I/O.
+    Returns (wrapper, raw_socket) where raw_socket supports recv/sendall.
+    """
+    c = get_client()
+    sock = c.api.exec_start(exec_id, tty=True, socket=True, demux=False)
+    raw = sock
+    for attr in ("_sock", "sock", "socket"):
+        inner = getattr(sock, attr, None)
+        if inner is not None and hasattr(inner, "recv"):
+            raw = inner
+            break
+    return sock, raw
+
+
+def resolve_shell_cmd(shell: str | None = None) -> list[str]:
+    """Map shell preference to exec command list."""
+    s = (shell or "sh").strip().lower()
+    mapping = {
+        "sh": ["/bin/sh", "-l"],
+        "bash": ["/bin/bash", "-l"],
+        "ash": ["/bin/ash", "-l"],
+        "zsh": ["/bin/zsh", "-l"],
+    }
+    if s in mapping:
+        return mapping[s]
+    # custom absolute path
+    if s.startswith("/"):
+        return [s]
+    return ["/bin/sh", "-l"]
 
 
 def _summarize(cont, unraid_names: set[str] | None = None) -> dict[str, Any]:

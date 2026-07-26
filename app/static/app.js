@@ -2,9 +2,28 @@ const state = {
   token: localStorage.getItem("dockerops_token") || "",
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
+  consoleEnabled: false,
   platform: "generic",
-  version: "0.4.9",
+  version: "0.5.0",
   tab: "overview",
+  /** Live log stream controller */
+  logs: {
+    id: null,
+    name: "",
+    es: null,
+    abort: null,
+    paused: false,
+    follow: true,
+  },
+  /** Web terminal session */
+  term: {
+    id: null,
+    name: "",
+    ws: null,
+    term: null,
+    fit: null,
+    ro: null,
+  },
   needsSetup: false,
   usernames: [],
   passwordReset: null,
@@ -43,7 +62,7 @@ const PLATFORM_LABEL = {
 
 const TAB_TITLES = {
   overview: ["总览", "平台 · 引擎 · 健康 · 活动容器"],
-  containers: ["容器", "生命周期 · 批量操作 · 日志 · 安全更新"],
+  containers: ["容器", "生命周期 · 终端 · 日志 · 安全更新"],
   updates: ["容器更新", "自动检测 · 列表徽标 · 一键安全升级"],
   compose: ["Compose", "项目发现 · 双方接管"],
   unraid: ["Unraid", "dockerMan 模板 · 非三方更新"],
@@ -313,9 +332,22 @@ function actionBtn(text, fn, { danger = false, disabled = false, primary = false
   return b;
 }
 
+function isNarrowScreen() {
+  try {
+    return window.matchMedia && window.matchMedia("(max-width: 960px)").matches;
+  } catch (_) {
+    return false;
+  }
+}
+
+function actionMaxPrimary(defaultN = 2) {
+  return isNarrowScreen() ? 1 : defaultN;
+}
+
 /**
  * Compact actions: at most 2 primary buttons + "更多" dropdown.
  * Keeps the 操作 column a fixed narrow strip so tables don't split mid-row.
+ * On narrow screens defaults to 1 primary to avoid action-column crush.
  * @param {HTMLElement} host
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean, primary?:boolean}[]} primary
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean}[]} [more]
@@ -324,7 +356,7 @@ function actionBtn(text, fn, { danger = false, disabled = false, primary = false
 function fillActionGroup(host, primary, more = [], opts = {}) {
   host.classList.add("actions", "col-actions");
   host.innerHTML = "";
-  const maxPrimary = opts.maxPrimary ?? 2;
+  const maxPrimary = opts.maxPrimary ?? actionMaxPrimary(2);
   const allPrimary = (primary || []).filter(Boolean);
   const shown = allPrimary.slice(0, maxPrimary);
   const overflow = allPrimary.slice(maxPrimary);
@@ -600,7 +632,7 @@ function renderContainers() {
     const actions = tr.querySelector(".actions");
     const running = (c.status || "").toLowerCase() === "running";
     const paused = (c.status || "").toLowerCase() === "paused";
-    // At most 2 primary: lifecycle + (更新|日志); rest in 更多 — avoids 操作列撑裂
+    // Primary: lifecycle + (更新|日志); 终端/kill 等进更多 — 窄屏 maxPrimary=1
     const primary = [];
     if (!running && !paused) primary.push({ label: "启动", fn: () => doLife(id, "start") });
     else if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
@@ -612,9 +644,15 @@ function renderContainers() {
     }
     const more = [
       running ? { label: "重启", fn: () => doLife(id, "restart") } : null,
+      {
+        label: "终端",
+        fn: () => openConsole(id, c.name),
+        disabled: !state.consoleEnabled || !running,
+      },
       upd && upd.update_available ? { label: "日志", fn: () => showLogs(id, c.name) } : null,
       { label: "详情", fn: () => showDetail(id, c.name) },
       running ? { label: "暂停", fn: () => doLife(id, "pause") } : null,
+      running ? { label: "强制停止", fn: () => doLife(id, "kill"), danger: true } : null,
       { label: "重命名", fn: () => doRename(id, c.name) },
       { label: "备份", fn: () => doBackup(id) },
       !(upd && upd.update_available) ? { label: "安全更新", fn: () => doUpdate(id) } : null,
@@ -624,7 +662,7 @@ function renderContainers() {
         : null,
       { label: "删除", fn: () => doRemove(id), danger: true, disabled: !state.takeover },
     ];
-    fillActionGroup(actions, primary, more, { maxPrimary: 2 });
+    fillActionGroup(actions, primary, more);
     tbody.appendChild(tr);
   });
   if (!items.length) {
@@ -670,8 +708,7 @@ function renderCompose() {
       [
         { label: "备份", fn: () => doComposeBackup(p.name) },
         { label: "Down", fn: () => doComposeDown(p.name), danger: true, disabled: !state.takeover },
-      ],
-      { maxPrimary: 2 }
+      ]
     );
     cbody.appendChild(tr);
   });
@@ -825,7 +862,7 @@ function renderOverviewCards({ doctor, health, platform, summary, sysInfo }) {
       kv("接管", state.takeover ? "已开启" : "关闭"),
       kv("资源 API", platform.resource_apis !== false ? "开启" : "关闭"),
       kv("模板目录", platform.unraid?.available ? "已挂载" : "未挂载"),
-      kv("控制台", platform.console_enabled ? "开启" : "关闭"),
+      kv("控制台", (platform.console_enabled || state.consoleEnabled) ? "开启" : "关闭"),
     ].join("");
   }
 
@@ -951,6 +988,11 @@ async function loadAll() {
     if (seq !== state.loadSeq) return;
 
     state.takeover = !!summary.takeover_enabled;
+    state.consoleEnabled = !!(
+      summary.console_enabled ||
+      platform.console_enabled ||
+      (platform.capabilities && platform.capabilities.console)
+    );
     state.platform = platform.platform || summary.platform || health.platform || "generic";
     state.version = health.version || state.version;
     state.containers = containers.items || [];
@@ -1406,6 +1448,30 @@ async function doRename(id, oldName) {
   }
 }
 
+function fmtPorts(ports) {
+  if (!ports) return "—";
+  if (typeof ports === "string") return ports;
+  const lines = [];
+  try {
+    Object.entries(ports).forEach(([k, v]) => {
+      if (!v || !v.length) {
+        lines.push(`${k} → (未发布)`);
+        return;
+      }
+      v.forEach((p) => {
+        lines.push(`${p.HostIp || "0.0.0.0"}:${p.HostPort} → ${k}`);
+      });
+    });
+  } catch (_) {
+    return JSON.stringify(ports);
+  }
+  return lines.length ? lines.join("\n") : "—";
+}
+
+function sectionHtml(title, inner) {
+  return `<div class="detail-section"><h4>${escapeHtml(title)}</h4>${inner}</div>`;
+}
+
 async function showDetail(id, name) {
   try {
     const [detail, stats] = await Promise.all([
@@ -1413,28 +1479,133 @@ async function showDetail(id, name) {
       api(`/api/containers/${encodeURIComponent(id)}/stats`).catch(() => null),
     ]);
     const c = detail.item || {};
-    const s = (stats && stats.item && stats.item.stats) || null;
+    const s = (stats && stats.item && stats.item.stats) || c.stats || null;
+    const running = (c.status || "").toLowerCase() === "running";
     $("#detail-title").textContent = `容器 · ${name || c.name || id}`;
-    const rows = [
+
+    const act = $("#detail-actions");
+    if (act) {
+      act.innerHTML = "";
+      act.appendChild(actionBtn("日志", () => showLogs(id, c.name || name)));
+      act.appendChild(
+        actionBtn("终端", () => openConsole(id, c.name || name), {
+          disabled: !state.consoleEnabled || !running,
+        })
+      );
+      if (running) {
+        act.appendChild(actionBtn("重启", () => doLife(id, "restart")));
+        act.appendChild(actionBtn("停止", () => doLife(id, "stop")));
+      } else {
+        act.appendChild(actionBtn("启动", () => doLife(id, "start")));
+      }
+    }
+
+    const basic = [
       kv("名称", c.name || "—"),
-      kv("ID", c.id || id, true),
+      kv("ID", c.full_id || c.id || id, true),
       kv("镜像", c.image || "—", true),
       kv("状态", c.status || "—"),
       kv("健康", c.health || "—"),
       kv("管理源", c.label || c.manager || "—"),
+      kv("重启策略", (c.restart_policy_full && c.restart_policy_full.Name) || c.restart_policy || "—"),
       kv("重启次数", c.restart_count ?? 0),
       kv("创建", c.created ? fmtTime(c.created) : "—"),
+      kv("启动时间", c.started_at ? fmtTime(c.started_at) : "—"),
     ];
+    if (c.compose_project) basic.push(kv("Compose", `${c.compose_project}/${c.compose_service || ""}`));
     if (s) {
-      rows.push(
+      basic.push(
         kv("CPU", `${(Number(s.cpu_percent) || 0).toFixed(1)}%`),
-        kv("内存", `${fmtBytes(s.mem_usage || 0)} / ${fmtBytes(s.mem_limit || 0)}`)
+        kv(
+          "内存",
+          `${fmtBytes(s.memory_usage || s.mem_usage || 0)} / ${fmtBytes(s.memory_limit || s.mem_limit || 0)} (${(Number(s.memory_percent || s.mem_percent) || 0).toFixed(1)}%)`
+        )
       );
     }
-    if (c.ports) rows.push(kv("端口", typeof c.ports === "string" ? c.ports : JSON.stringify(c.ports)));
-    if (c.compose_project) rows.push(kv("Compose", `${c.compose_project}/${c.compose_service || ""}`));
-    $("#detail-body").innerHTML = `<div class="kv-grid">${rows.join("")}</div>`;
+    if (c.memory_limit) basic.push(kv("内存限制", fmtBytes(c.memory_limit)));
+    if (c.privileged) basic.push(kv("特权", "是"));
+
+    const portsHtml = `<pre class="mono small" style="margin:0;white-space:pre-wrap">${escapeHtml(fmtPorts(c.ports || c.port_bindings))}</pre>`;
+
+    const mounts = c.mounts || [];
+    const mountsHtml = mounts.length
+      ? `<ul class="detail-list">${mounts
+          .map(
+            (m) =>
+              `<li><span class="mono small">${escapeHtml(m.source || "")} → ${escapeHtml(m.destination || "")}</span><span class="muted small">${escapeHtml(m.type || "")}${m.rw === false ? " ro" : ""}</span></li>`
+          )
+          .join("")}</ul>`
+      : `<div class="muted small">无挂载</div>`;
+
+    const envs = c.env || [];
+    const envHtml = envs.length
+      ? `<ul class="detail-list">${envs
+          .slice(0, 80)
+          .map((e) => `<li><span class="mono small">${escapeHtml(e)}</span></li>`)
+          .join("")}</ul>${envs.length > 80 ? `<div class="muted small">…共 ${envs.length} 项</div>` : ""}`
+      : `<div class="muted small">无环境变量</div>`;
+
+    const netDetails = c.network_details || {};
+    const netNames = c.networks || Object.keys(netDetails);
+    const netsHtml = netNames.length
+      ? `<ul class="detail-list" id="detail-net-list">${netNames
+          .map((n) => {
+            const d = netDetails[n] || {};
+            return `<li data-net="${escapeHtml(n)}"><span><strong>${escapeHtml(n)}</strong><div class="muted mono small">${escapeHtml(d.ip || "—")} ${d.mac ? "· " + escapeHtml(d.mac) : ""}</div></span><button type="button" class="btn small danger detail-net-disc" data-net="${escapeHtml(n)}">断开</button></li>`;
+          })
+          .join("")}</ul>
+         <div class="row-between wrap" style="margin-top:0.45rem">
+           <input type="text" class="input" id="detail-net-name" placeholder="网络名，如 bridge" style="flex:1;min-width:140px" />
+           <button type="button" class="btn small" id="detail-net-connect">连接到…</button>
+         </div>`
+      : `<div class="muted small">无网络</div>
+         <div class="row-between wrap" style="margin-top:0.45rem">
+           <input type="text" class="input" id="detail-net-name" placeholder="网络名" style="flex:1;min-width:140px" />
+           <button type="button" class="btn small" id="detail-net-connect">连接到…</button>
+         </div>`;
+
+    $("#detail-body").innerHTML = [
+      sectionHtml("基本信息", `<div class="kv-grid">${basic.join("")}</div>`),
+      sectionHtml("端口", portsHtml),
+      sectionHtml("挂载", mountsHtml),
+      sectionHtml("环境变量", envHtml),
+      sectionHtml("网络", netsHtml),
+    ].join("");
+
     $("#detail-dialog").showModal();
+
+    $("#detail-net-connect")?.addEventListener("click", async () => {
+      const net = ($("#detail-net-name")?.value || "").trim();
+      if (!net) return alert("请输入网络名");
+      if (!requireLogin()) return;
+      try {
+        const r = await api(`/api/containers/${encodeURIComponent(id)}/networks/connect`, {
+          method: "POST",
+          body: JSON.stringify({ network: net }),
+        });
+        alert(r.message || "已连接");
+        showDetail(id, name);
+      } catch (e) {
+        alert(e.message);
+      }
+    });
+    document.querySelectorAll(".detail-net-disc").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const net = btn.dataset.net;
+        if (!net || !requireLogin()) return;
+        if (!confirm(`断开网络 ${net}？`)) return;
+        try {
+          const r = await api(`/api/containers/${encodeURIComponent(id)}/networks/disconnect`, {
+            method: "POST",
+            body: JSON.stringify({ network: net }),
+          });
+          alert(r.message || "已断开");
+          showDetail(id, name);
+        } catch (e) {
+          alert(e.message);
+        }
+      });
+    });
   } catch (e) {
     alert(`详情失败：${e.message}`);
   }
@@ -1476,14 +1647,300 @@ async function doRemove(id) {
   }
 }
 
+function stopLogStream() {
+  if (state.logs.es) {
+    try {
+      state.logs.es.close();
+    } catch (_) {}
+    state.logs.es = null;
+  }
+  if (state.logs.abort) {
+    try {
+      state.logs.abort.abort();
+    } catch (_) {}
+    state.logs.abort = null;
+  }
+  const st = $("#logs-status");
+  if (st) st.textContent = "已停止";
+}
+
+function setLogsPaused(paused) {
+  state.logs.paused = !!paused;
+  const btn = $("#logs-pause");
+  if (btn) btn.textContent = state.logs.paused ? "继续" : "暂停";
+  const st = $("#logs-status");
+  if (st && state.logs.es) st.textContent = state.logs.paused ? "已暂停" : "实时跟随中";
+}
+
+function appendLogLine(line) {
+  if (state.logs.paused) return;
+  const body = $("#logs-body");
+  if (!body) return;
+  if (body.textContent === "…" || body.textContent === "(空)") body.textContent = "";
+  body.textContent += line.endsWith("\n") ? line : line + "\n";
+  // auto-scroll
+  body.scrollTop = body.scrollHeight;
+  // cap size ~1.5MB
+  if (body.textContent.length > 1_500_000) {
+    body.textContent = body.textContent.slice(-1_000_000);
+  }
+}
+
 async function showLogs(id, name) {
+  if (!requireLogin()) return;
+  stopLogStream();
+  state.logs.id = id;
+  state.logs.name = name || id;
+  state.logs.paused = false;
+  setLogsPaused(false);
+  $("#logs-title").textContent = `日志 · ${name || id}`;
+  $("#logs-body").textContent = "加载中…";
+  const follow = $("#logs-follow")?.checked !== false;
+  const timestamps = $("#logs-timestamps")?.checked !== false;
+  const tail = Number($("#logs-tail")?.value || 300);
+  $("#logs-dialog").showModal();
+  const st = $("#logs-status");
+
+  if (follow) {
+    // EventSource cannot set Authorization header — use fetch stream with token
+    // Fallback: query via fetch SSE manually
+    try {
+      if (st) st.textContent = "连接中…";
+      const ctrl = new AbortController();
+      state.logs.abort = ctrl;
+      const url = `/api/containers/${encodeURIComponent(id)}/logs?follow=1&tail=${tail}&timestamps=${timestamps ? "true" : "false"}`;
+      const res = await fetch(url, {
+        headers: authHeaders(),
+        signal: ctrl.signal,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || res.statusText);
+      }
+      $("#logs-body").textContent = "";
+      if (st) st.textContent = "实时跟随中";
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = "";
+      (async () => {
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buf += decoder.decode(value, { stream: true });
+            const parts = buf.split("\n\n");
+            buf = parts.pop() || "";
+            for (const block of parts) {
+              const lines = block.split("\n");
+              let dataLine = "";
+              for (const ln of lines) {
+                if (ln.startsWith("data:")) dataLine += ln.slice(5).trim();
+              }
+              if (!dataLine) continue;
+              try {
+                const obj = JSON.parse(dataLine);
+                if (obj.line != null) appendLogLine(String(obj.line));
+                else if (obj.error) appendLogLine(`[error] ${obj.error}`);
+              } catch (_) {
+                appendLogLine(dataLine);
+              }
+            }
+          }
+          if (st) st.textContent = "流已结束";
+        } catch (e) {
+          if (e.name !== "AbortError" && st) st.textContent = `断开：${e.message || e}`;
+        }
+      })();
+    } catch (e) {
+      // fallback snapshot
+      try {
+        const r = await api(
+          `/api/containers/${encodeURIComponent(id)}/logs?tail=${tail}&timestamps=${timestamps ? "true" : "false"}`
+        );
+        $("#logs-body").textContent = r.logs || "(空)";
+        if (st) st.textContent = `快照（跟随失败：${e.message}）`;
+      } catch (e2) {
+        $("#logs-body").textContent = "";
+        alert(`读取日志失败：${e2.message}`);
+      }
+    }
+  } else {
+    try {
+      const r = await api(
+        `/api/containers/${encodeURIComponent(id)}/logs?tail=${tail}&timestamps=${timestamps ? "true" : "false"}`
+      );
+      $("#logs-body").textContent = r.logs || "(空)";
+      if (st) st.textContent = "快照";
+    } catch (e) {
+      alert(`读取日志失败：${e.message}`);
+    }
+  }
+}
+
+function getXtermConstructors() {
+  const Terminal = window.Terminal || (window.xterm && window.xterm.Terminal);
+  let FitAddonCtor =
+    (window.FitAddon && (window.FitAddon.FitAddon || window.FitAddon)) ||
+    (window.FitAddonModule && window.FitAddonModule.FitAddon);
+  return { Terminal, FitAddonCtor };
+}
+
+function closeConsole() {
+  if (state.term.ws) {
+    try {
+      state.term.ws.close();
+    } catch (_) {}
+    state.term.ws = null;
+  }
+  if (state.term.ro) {
+    try {
+      state.term.ro.disconnect();
+    } catch (_) {}
+    state.term.ro = null;
+  }
+  if (state.term.term) {
+    try {
+      state.term.term.dispose();
+    } catch (_) {}
+    state.term.term = null;
+    state.term.fit = null;
+  }
+  const host = $("#console-term");
+  if (host) host.innerHTML = "";
+  const st = $("#console-status");
+  if (st) st.textContent = "未连接";
+}
+
+function openConsole(id, name) {
+  if (!requireLogin()) return;
+  if (!state.consoleEnabled) {
+    alert("控制台未启用。请在容器环境变量设置 DOCKEROPS_CONSOLE_ENABLED=true 后重建。");
+    return;
+  }
+  closeConsole();
+  state.term.id = id;
+  state.term.name = name || id;
+  $("#console-title").textContent = `终端 · ${name || id}`;
+  $("#console-dialog").showModal();
+  connectConsole();
+}
+
+function connectConsole() {
+  const id = state.term.id;
+  if (!id) return;
+  const { Terminal, FitAddonCtor } = getXtermConstructors();
+  if (!Terminal) {
+    $("#console-status").textContent = "xterm 未加载";
+    alert("终端组件未加载，请强制刷新页面");
+    return;
+  }
+  const host = $("#console-term");
+  if (!host) return;
+  host.innerHTML = "";
+
+  if (state.term.ws) {
+    try {
+      state.term.ws.close();
+    } catch (_) {}
+    state.term.ws = null;
+  }
+  if (state.term.term) {
+    try {
+      state.term.term.dispose();
+    } catch (_) {}
+  }
+
+  const term = new Terminal({
+    cursorBlink: true,
+    fontSize: 13,
+    fontFamily: "ui-monospace, SFMono-Regular, Menlo, Consolas, monospace",
+    theme: {
+      background: "#0b0e14",
+      foreground: "#e5e7eb",
+      cursor: "#00f3ff",
+      selectionBackground: "rgba(108,92,231,0.35)",
+    },
+    convertEol: true,
+  });
+  let fit = null;
+  if (FitAddonCtor) {
+    try {
+      fit = new FitAddonCtor();
+      term.loadAddon(fit);
+    } catch (_) {
+      fit = null;
+    }
+  }
+  term.open(host);
+  state.term.term = term;
+  state.term.fit = fit;
   try {
-    const r = await api(`/api/containers/${encodeURIComponent(id)}/logs?tail=300`);
-    $("#logs-title").textContent = `日志 · ${name || id}`;
-    $("#logs-body").textContent = r.logs || "(空)";
-    $("#logs-dialog").showModal();
-  } catch (e) {
-    alert(`读取日志失败：${e.message}`);
+    fit && fit.fit();
+  } catch (_) {}
+
+  const shell = $("#console-shell")?.value || "sh";
+  const cols = term.cols || 120;
+  const rows = term.rows || 30;
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const qs = new URLSearchParams({
+    token: state.token || "",
+    shell,
+    cols: String(cols),
+    rows: String(rows),
+  });
+  const url = `${proto}//${location.host}/api/containers/${encodeURIComponent(id)}/console?${qs}`;
+  const st = $("#console-status");
+  if (st) st.textContent = "连接中…";
+  const ws = new WebSocket(url);
+  ws.binaryType = "arraybuffer";
+  state.term.ws = ws;
+
+  ws.onopen = () => {
+    if (st) st.textContent = "已连接";
+    try {
+      fit && fit.fit();
+      ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+    } catch (_) {}
+  };
+  ws.onmessage = (ev) => {
+    if (!state.term.term) return;
+    if (ev.data instanceof ArrayBuffer) {
+      state.term.term.write(new Uint8Array(ev.data));
+    } else if (typeof ev.data === "string") {
+      state.term.term.write(ev.data);
+    }
+  };
+  ws.onerror = () => {
+    if (st) st.textContent = "连接错误";
+  };
+  ws.onclose = (ev) => {
+    if (st) st.textContent = `已断开${ev.reason ? " · " + ev.reason : ""}`;
+    state.term.ws = null;
+  };
+
+  term.onData((data) => {
+    if (state.term.ws && state.term.ws.readyState === WebSocket.OPEN) {
+      state.term.ws.send(data);
+    }
+  });
+  term.onResize(({ cols: c, rows: r }) => {
+    if (state.term.ws && state.term.ws.readyState === WebSocket.OPEN) {
+      state.term.ws.send(JSON.stringify({ type: "resize", cols: c, rows: r }));
+    }
+  });
+
+  if (window.ResizeObserver) {
+    if (state.term.ro) {
+      try {
+        state.term.ro.disconnect();
+      } catch (_) {}
+    }
+    state.term.ro = new ResizeObserver(() => {
+      try {
+        fit && fit.fit();
+      } catch (_) {}
+    });
+    state.term.ro.observe(host);
   }
 }
 
@@ -1786,8 +2243,55 @@ document.querySelectorAll("#main-tabs .nav-item").forEach((btn) => {
 });
 
 $("#btn-refresh").addEventListener("click", loadAll);
-$("#logs-close").addEventListener("click", () => $("#logs-dialog").close());
+$("#logs-close").addEventListener("click", () => {
+  stopLogStream();
+  $("#logs-dialog").close();
+});
+$("#logs-dialog")?.addEventListener("close", () => stopLogStream());
+$("#logs-pause")?.addEventListener("click", () => setLogsPaused(!state.logs.paused));
+$("#logs-clear")?.addEventListener("click", () => {
+  const b = $("#logs-body");
+  if (b) b.textContent = "";
+});
+$("#logs-reload")?.addEventListener("click", () => {
+  if (state.logs.id) showLogs(state.logs.id, state.logs.name);
+});
+$("#logs-follow")?.addEventListener("change", () => {
+  if (state.logs.id) showLogs(state.logs.id, state.logs.name);
+});
+$("#logs-timestamps")?.addEventListener("change", () => {
+  if (state.logs.id) showLogs(state.logs.id, state.logs.name);
+});
+$("#logs-tail")?.addEventListener("change", () => {
+  if (state.logs.id) showLogs(state.logs.id, state.logs.name);
+});
 $("#detail-close")?.addEventListener("click", () => $("#detail-dialog").close());
+$("#console-close")?.addEventListener("click", () => {
+  closeConsole();
+  $("#console-dialog").close();
+});
+$("#console-dialog")?.addEventListener("close", () => closeConsole());
+$("#console-reconnect")?.addEventListener("click", () => connectConsole());
+$("#console-clear")?.addEventListener("click", () => {
+  try {
+    state.term.term && state.term.term.clear();
+  } catch (_) {}
+});
+$("#console-shell")?.addEventListener("change", () => {
+  if (state.term.id) connectConsole();
+});
+// re-render action density on orientation / resize across 960px
+let _narrowWas = isNarrowScreen();
+window.addEventListener("resize", () => {
+  const n = isNarrowScreen();
+  if (n !== _narrowWas) {
+    _narrowWas = n;
+    try {
+      renderContainers();
+      renderImages();
+    } catch (_) {}
+  }
+});
 
 $("#btn-menu")?.addEventListener("click", () => setSidebarOpen(true));
 $("#btn-sidebar-close")?.addEventListener("click", () => setSidebarOpen(false));

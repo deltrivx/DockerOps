@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -14,6 +15,7 @@ from pydantic import BaseModel, Field
 from auth import (
     AuthUser,
     OptionalUser,
+    actor_from_token,
     auth_status,
     bootstrap_from_env,
     change_password,
@@ -37,7 +39,20 @@ from config import (
     read_process_proxy,
 )
 from db import audit, init_db
-from docker_client import get_container, list_containers, ping, refresh_template_name_cache
+from docker_client import (
+    connect_network,
+    disconnect_network,
+    exec_create,
+    exec_resize,
+    exec_start_socket,
+    get_container,
+    image_history,
+    list_containers,
+    list_running_stats,
+    ping,
+    refresh_template_name_cache,
+    resolve_shell_cmd,
+)
 from docker_resources import (
     activity_stats,
     batch_lifecycle,
@@ -58,7 +73,6 @@ from docker_resources import (
     volumes_remove,
 )
 from db import get_meta, set_meta
-from docker_client import image_history, list_running_stats
 from doctor import diagnose_all, diagnose_one
 from events_stream import recent_events, sse_docker_events
 from host_platform import platform_info
@@ -84,8 +98,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.9"
+VERSION = "0.5.0"
 CHANGELOG = [
+    {
+        "version": "0.5.0",
+        "date": "2026-07-26",
+        "items": [
+            "容器 Web 终端（docker exec + WebSocket + xterm，DOCKEROPS_CONSOLE_ENABLED）",
+            "实时日志跟随（SSE）；详情增强（挂载/环境/网络/端口）；强制停止；网络连接/断开",
+            "移动端表格藏次要列 + 操作 1 主按钮，改善窄屏挤压",
+        ],
+    },
     {
         "version": "0.4.9",
         "date": "2026-07-26",
@@ -301,6 +324,12 @@ class BatchBody(BaseModel):
 
 class RenameBody(BaseModel):
     name: str = Field(..., min_length=1, max_length=128)
+
+
+class NetworkAttachBody(BaseModel):
+    network: str = Field(..., min_length=1, max_length=128)
+    aliases: list[str] | None = None
+    force: bool = False
 
 
 class PrefsBody(BaseModel):
@@ -719,7 +748,7 @@ def api_put_prefs(body: PrefsBody, actor: AuthUser) -> dict[str, Any]:
 @app.get("/api/containers/{container_id}/logs")
 def api_logs(
     container_id: str,
-    actor: OptionalUser = None,
+    actor: AuthUser,
     tail: int = Query(200, ge=1, le=10000),
     timestamps: bool = True,
     follow: bool = False,
@@ -865,7 +894,7 @@ def api_system_prune(body: PruneBody, actor: AuthUser) -> dict[str, Any]:
 
 @app.get("/api/events")
 def api_events(
-    actor: OptionalUser = None,
+    actor: AuthUser,
     limit: int = Query(50, ge=1, le=500),
     since_seconds: int = Query(3600, ge=60, le=86400),
     follow: bool = False,
@@ -880,6 +909,218 @@ def api_events(
     result = recent_events(limit=limit, since_seconds=since_seconds)
     result["viewer"] = actor
     return result
+
+
+@app.post("/api/containers/{container_id}/networks/connect")
+def api_container_net_connect(
+    container_id: str, body: NetworkAttachBody, actor: AuthUser
+) -> dict[str, Any]:
+    _resource_or_403()
+    net = (body.network or "").strip()
+    if not net:
+        raise HTTPException(status_code=400, detail="network 不能为空")
+    try:
+        result = connect_network(container_id, net, aliases=body.aliases)
+        audit(
+            "network_connect",
+            actor=actor or "unknown",
+            detail={"container": container_id, "network": net, "aliases": body.aliases},
+        )
+        return {**result, "message": f"已连接到网络 {net}", "viewer": actor}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="容器或网络不存在") from None
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.post("/api/containers/{container_id}/networks/disconnect")
+def api_container_net_disconnect(
+    container_id: str, body: NetworkAttachBody, actor: AuthUser
+) -> dict[str, Any]:
+    _resource_or_403()
+    net = (body.network or "").strip()
+    if not net:
+        raise HTTPException(status_code=400, detail="network 不能为空")
+    try:
+        result = disconnect_network(container_id, net, force=body.force)
+        audit(
+            "network_disconnect",
+            actor=actor or "unknown",
+            detail={"container": container_id, "network": net, "force": body.force},
+        )
+        return {**result, "message": f"已从网络 {net} 断开", "viewer": actor}
+    except KeyError:
+        raise HTTPException(status_code=404, detail="容器或网络不存在") from None
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.websocket("/api/containers/{container_id}/console")
+async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
+    """
+    Interactive docker exec TTY over WebSocket.
+    Auth: ?token= session bearer (browsers cannot set WS Authorization easily).
+    Query: shell=sh|bash|ash, cols, rows
+    Client → server: text input, or JSON {"type":"resize","cols":N,"rows":N}
+    Server → client: binary/text stdout stream
+    """
+    await websocket.accept()
+    settings = get_settings()
+    if not settings.resource_apis:
+        await websocket.close(code=4403, reason="资源 API 已关闭")
+        return
+    if not settings.console_enabled:
+        await websocket.close(code=4403, reason="控制台未启用（DOCKEROPS_CONSOLE_ENABLED）")
+        return
+
+    token = websocket.query_params.get("token") or ""
+    actor = actor_from_token(token)
+    if not actor:
+        await websocket.close(code=4401, reason="需要登录")
+        return
+
+    shell = websocket.query_params.get("shell") or "sh"
+    try:
+        cols = max(20, min(int(websocket.query_params.get("cols") or 120), 400))
+        rows = max(5, min(int(websocket.query_params.get("rows") or 30), 120))
+    except Exception:
+        cols, rows = 120, 30
+
+    cmd = resolve_shell_cmd(shell)
+    sock = None
+    exec_id = None
+    idle_sec = 30 * 60
+    last_activity = time.time()
+
+    try:
+        created = exec_create(container_id, cmd=cmd, tty=True, stdin=True)
+        exec_id = created.get("Id")
+        if not exec_id:
+            await websocket.send_text("\r\n[error] exec_create 失败\r\n")
+            await websocket.close(code=1011)
+            return
+        try:
+            exec_resize(exec_id, height=rows, width=cols)
+        except Exception:
+            pass
+        sock, raw = exec_start_socket(exec_id)
+        # Prefer short timeouts over non-blocking to avoid platform-specific BlockingIOError loops
+        if hasattr(raw, "settimeout"):
+            try:
+                raw.settimeout(0.25)
+            except Exception:
+                pass
+        elif hasattr(raw, "setblocking"):
+            try:
+                raw.setblocking(False)
+            except Exception:
+                pass
+
+        audit(
+            "console_open",
+            actor=actor,
+            detail={"container": container_id, "shell": shell, "cmd": cmd, "cols": cols, "rows": rows},
+        )
+
+        loop = asyncio.get_event_loop()
+
+        async def pump_docker_to_ws() -> None:
+            nonlocal last_activity
+            while True:
+                try:
+                    data = await loop.run_in_executor(None, lambda: raw.recv(4096))
+                except BlockingIOError:
+                    await asyncio.sleep(0.02)
+                    continue
+                except TimeoutError:
+                    if time.time() - last_activity > idle_sec:
+                        break
+                    continue
+                except Exception as ex:
+                    # socket.timeout on some platforms
+                    if "timed out" in str(ex).lower():
+                        if time.time() - last_activity > idle_sec:
+                            break
+                        continue
+                    break
+                if not data:
+                    break
+                last_activity = time.time()
+                try:
+                    if isinstance(data, bytes):
+                        await websocket.send_bytes(data)
+                    else:
+                        await websocket.send_text(str(data))
+                except Exception:
+                    break
+
+        async def pump_ws_to_docker() -> None:
+            nonlocal last_activity, cols, rows
+            while True:
+                try:
+                    msg = await asyncio.wait_for(websocket.receive(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    if time.time() - last_activity > idle_sec:
+                        break
+                    continue
+                except WebSocketDisconnect:
+                    break
+                except Exception:
+                    break
+                last_activity = time.time()
+                if msg.get("type") == "websocket.disconnect":
+                    break
+                if "bytes" in msg and msg["bytes"] is not None:
+                    try:
+                        await loop.run_in_executor(None, lambda b=msg["bytes"]: raw.sendall(b))
+                    except Exception:
+                        break
+                elif "text" in msg and msg["text"] is not None:
+                    text = msg["text"]
+                    # resize control frame
+                    if text.startswith("{") and '"type"' in text:
+                        try:
+                            payload = json.loads(text)
+                            if payload.get("type") == "resize":
+                                cols = max(20, min(int(payload.get("cols") or cols), 400))
+                                rows = max(5, min(int(payload.get("rows") or rows), 120))
+                                if exec_id:
+                                    await loop.run_in_executor(
+                                        None, lambda: exec_resize(exec_id, height=rows, width=cols)
+                                    )
+                                continue
+                        except Exception:
+                            pass
+                    try:
+                        await loop.run_in_executor(
+                            None, lambda t=text: raw.sendall(t.encode("utf-8", errors="replace"))
+                        )
+                    except Exception:
+                        break
+
+        await asyncio.gather(pump_docker_to_ws(), pump_ws_to_docker())
+    except Exception as e:
+        try:
+            await websocket.send_text(f"\r\n[error] {e}\r\n")
+        except Exception:
+            pass
+    finally:
+        audit(
+            "console_close",
+            actor=actor or "unknown",
+            detail={"container": container_id, "shell": shell, "exec_id": (exec_id or "")[:24]},
+        )
+        try:
+            if sock is not None:
+                closer = getattr(sock, "close", None)
+                if callable(closer):
+                    closer()
+        except Exception:
+            pass
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 @app.get("/api/doctor")

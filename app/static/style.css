@@ -928,6 +928,8 @@ table.volumes-table {
   width: 100%;
   min-width: 720px;
 }
+
+/* Desktop default; mobile overrides below reduce min-width after column hide */
 table.images-table th.col-actions,
 table.images-table td.col-actions { width: 14%; max-width: none !important; }
 table.containers-table th.col-actions,
@@ -1187,6 +1189,104 @@ body.auth-locked .shell {
   max-height: 70vh;
   overflow: auto;
 }
+.detail-section {
+  margin: 0.85rem 0 0.4rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+}
+.detail-section:first-child {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: none;
+}
+.detail-section h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.detail-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.28rem;
+  font-size: 0.84rem;
+}
+.detail-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 0.4rem;
+  align-items: start;
+  padding: 0.28rem 0.35rem;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.18);
+}
+.detail-list .mono {
+  word-break: break-all;
+  white-space: normal !important;
+}
+.detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  margin-bottom: 0.65rem;
+}
+.logs-dialog,
+.console-dialog,
+.detail-dialog {
+  width: min(960px, 96vw);
+  max-width: 96vw;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: rgba(14, 18, 28, 0.98);
+  color: var(--text);
+  padding: 0.85rem 1rem 1rem;
+}
+.console-dialog {
+  width: min(1100px, 98vw);
+}
+.logs-toolbar,
+.console-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+  margin: 0.55rem 0 0.45rem;
+}
+.logs-body {
+  max-height: min(62vh, 560px);
+  overflow: auto;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.55rem 0.7rem;
+  font-size: 0.78rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.console-term {
+  height: min(62vh, 560px);
+  background: #0b0e14;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.35rem;
+  overflow: hidden;
+}
+.console-term .xterm {
+  height: 100%;
+}
+.console-term .xterm-viewport {
+  overflow-y: auto !important;
+}
+.logs-toolbar .input,
+.logs-toolbar .select,
+.console-toolbar .select {
+  min-width: 0;
+  width: auto;
+}
 
 .foot {
   text-align: center;
@@ -1283,12 +1383,128 @@ body.auth-locked .shell {
   #particles, .spotlight, .bg-orbs {
     pointer-events: none !important;
   }
+
+  /*
+   * Mobile table density: hide secondary columns so name/status/actions stay usable.
+   * Desktop layout untouched (rules only inside this media query).
+   */
+  table.containers-table col:nth-child(3),
+  table.containers-table th.col-mgr,
+  table.containers-table td.col-mgr,
+  table.containers-table th.cell-text:nth-child(4),
+  table.containers-table td.cell-text:nth-child(4),
+  table.containers-table th.col-health,
+  table.containers-table td.col-health,
+  table.containers-table th.col-num,
+  table.containers-table td.col-num {
+    display: none !important;
+  }
+  table.images-table col:nth-child(3),
+  table.images-table col:nth-child(5),
+  table.images-table col:nth-child(6),
+  table.images-table th.col-id,
+  table.images-table td.col-id,
+  table.images-table th.col-date,
+  table.images-table td.col-date,
+  table.images-table th.col-used,
+  table.images-table td.col-used {
+    display: none !important;
+  }
+  table.updates-table col:nth-child(3),
+  table.updates-table col:nth-child(4),
+  table.updates-table col:nth-child(5),
+  table.updates-table th.col-mgr,
+  table.updates-table td.col-mgr,
+  table.updates-table th.cell-text:nth-child(4),
+  table.updates-table td.cell-text:nth-child(4),
+  table.updates-table th.col-status,
+  table.updates-table td.col-status {
+    display: none !important;
+  }
+  table.compose-table col:nth-child(2),
+  table.compose-table col:nth-child(4),
+  table.compose-table th.cell-text:nth-child(2),
+  table.compose-table td.cell-text:nth-child(2),
+  table.compose-table th.cell-text:nth-child(4),
+  table.compose-table td.cell-text:nth-child(4) {
+    display: none !important;
+  }
+  table.unraid-table col:nth-child(2),
+  table.unraid-table th.cell-text:nth-child(2),
+  table.unraid-table td.cell-text:nth-child(2) {
+    display: none !important;
+  }
+  table.networks-table col:nth-child(2),
+  table.networks-table col:nth-child(3),
+  table.networks-table col:nth-child(4),
+  table.networks-table th.col-status,
+  table.networks-table td.col-status,
+  table.networks-table th.cell-text:nth-child(3),
+  table.networks-table td.cell-text:nth-child(3),
+  table.networks-table th.col-num,
+  table.networks-table td.col-num {
+    display: none !important;
+  }
+  table.volumes-table col:nth-child(2),
+  table.volumes-table col:nth-child(3),
+  table.volumes-table th.col-status,
+  table.volumes-table td.col-status,
+  table.volumes-table th.cell-text:nth-child(3),
+  table.volumes-table td.cell-text:nth-child(3) {
+    display: none !important;
+  }
+
+  table.containers-table,
+  table.images-table,
+  table.updates-table {
+    min-width: 460px;
+  }
+  table.compose-table,
+  table.unraid-table,
+  table.networks-table,
+  table.volumes-table {
+    min-width: 360px;
+  }
+
+  /* sticky name column while horizontal scrolling */
+  table.containers-table th.cell-text:nth-child(2),
+  table.containers-table td.cell-text:nth-child(2),
+  table.images-table th.cell-text:nth-child(2),
+  table.images-table td.cell-text:nth-child(2) {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: rgba(14, 18, 28, 0.96);
+    box-shadow: 4px 0 8px rgba(0, 0, 0, 0.25);
+  }
+  table.containers-table th.col-check,
+  table.containers-table td.col-check,
+  table.images-table th.col-check,
+  table.images-table td.col-check {
+    position: sticky;
+    left: 0;
+    z-index: 3;
+    background: rgba(14, 18, 28, 0.96);
+  }
+  .table-wrap::after {
+    content: "左右滑动查看更多";
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    padding: 0.25rem 0.15rem 0;
+  }
 }
 
 @media (max-width: 520px) {
   .score { font-size: 2.8rem; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
   .btn.small { font-size: 0.72rem; min-height: 36px; }
+  table.containers-table,
+  table.images-table,
+  table.updates-table {
+    min-width: 360px;
+  }
+  .batch-bar .btn { flex: 1 1 auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {

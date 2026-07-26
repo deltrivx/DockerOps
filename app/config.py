@@ -44,7 +44,7 @@ class Settings(BaseSettings):
     platform: str = "auto"
     # Portainer-like daily resource APIs (lifecycle/logs/images/nets/vols/system)
     resource_apis: bool = True
-    # Web exec console (high risk); default off for v0.3
+    # Web exec console (high risk). Unraid template defaults true; generic still off unless set.
     console_enabled: bool = False
 
     # Unraid-style background update detect (registry digest cache)
