@@ -80,9 +80,25 @@ def init_db() -> None:
                     value TEXT NOT NULL,
                     updated_at REAL NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS docker_endpoints (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    docker_host TEXT NOT NULL,
+                    tls_enabled INTEGER NOT NULL DEFAULT 0,
+                    tls_ca TEXT,
+                    tls_cert TEXT,
+                    tls_key TEXT,
+                    verify_tls INTEGER NOT NULL DEFAULT 1,
+                    is_default INTEGER NOT NULL DEFAULT 0,
+                    enabled INTEGER NOT NULL DEFAULT 1,
+                    notes TEXT,
+                    created_at REAL NOT NULL,
+                    updated_at REAL NOT NULL
+                );
                 CREATE INDEX IF NOT EXISTS idx_sessions_expires ON sessions(expires_at);
                 CREATE INDEX IF NOT EXISTS idx_ops_created ON ops_records(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_audit_created ON audit_log(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_endpoints_default ON docker_endpoints(is_default);
                 """
             )
             # Ensure auth_store marker exists for ops visibility
@@ -97,6 +113,11 @@ def init_db() -> None:
             conn.commit()
         finally:
             conn.close()
+        # Seed default endpoint from env after table exists
+        try:
+            ensure_default_endpoint()
+        except Exception:
+            pass
 
 
 def add_ops_record(
@@ -380,3 +401,312 @@ def _try_json(s: str | None) -> Any:
         return json.loads(s)
     except Exception:
         return s
+
+
+# ── Docker endpoints (multi-engine) ──────────────────────────────────────────
+
+META_ACTIVE_ENDPOINT = "active_endpoint_id"
+
+
+def _row_endpoint(r: sqlite3.Row) -> dict[str, Any]:
+    return {
+        "id": r["id"],
+        "name": r["name"],
+        "docker_host": r["docker_host"],
+        "tls_enabled": bool(r["tls_enabled"]),
+        "tls_ca": r["tls_ca"] or "",
+        "tls_cert": r["tls_cert"] or "",
+        "tls_key": r["tls_key"] or "",
+        "verify_tls": bool(r["verify_tls"]),
+        "is_default": bool(r["is_default"]),
+        "enabled": bool(r["enabled"]),
+        "notes": r["notes"] or "",
+        "created_at": r["created_at"],
+        "updated_at": r["updated_at"],
+    }
+
+
+def ensure_default_endpoint() -> dict[str, Any]:
+    """
+    Ensure at least one endpoint exists. Seeds from DOCKEROPS_DOCKER_HOST / default sock.
+    Safe to call repeatedly.
+    """
+    settings = get_settings()
+    host = (settings.docker_host or "unix:///var/run/docker.sock").strip()
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM docker_endpoints ORDER BY is_default DESC, created_at ASC LIMIT 1"
+            ).fetchone()
+            if row:
+                return _row_endpoint(row)
+            eid = uuid.uuid4().hex
+            now = time.time()
+            conn.execute(
+                """
+                INSERT INTO docker_endpoints (
+                    id, name, docker_host, tls_enabled, tls_ca, tls_cert, tls_key,
+                    verify_tls, is_default, enabled, notes, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    eid,
+                    "本机",
+                    host,
+                    0,
+                    "",
+                    "",
+                    "",
+                    1,
+                    1,
+                    1,
+                    "由环境 DOCKEROPS_DOCKER_HOST / 默认 sock 初始化",
+                    now,
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                INSERT INTO app_meta (key, value, updated_at) VALUES (?,?,?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                """,
+                (META_ACTIVE_ENDPOINT, eid, now),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM docker_endpoints WHERE id = ?", (eid,)).fetchone()
+            return _row_endpoint(row)
+        finally:
+            conn.close()
+
+
+def list_endpoints() -> list[dict[str, Any]]:
+    ensure_default_endpoint()
+    with _lock:
+        conn = connect()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM docker_endpoints ORDER BY is_default DESC, name COLLATE NOCASE ASC"
+            ).fetchall()
+            return [_row_endpoint(r) for r in rows]
+        finally:
+            conn.close()
+
+
+def get_endpoint(endpoint_id: str) -> dict[str, Any] | None:
+    if not endpoint_id:
+        return None
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM docker_endpoints WHERE id = ?", (endpoint_id,)
+            ).fetchone()
+            return _row_endpoint(row) if row else None
+        finally:
+            conn.close()
+
+
+def get_default_endpoint() -> dict[str, Any]:
+    ensure_default_endpoint()
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM docker_endpoints WHERE is_default = 1 AND enabled = 1 LIMIT 1"
+            ).fetchone()
+            if not row:
+                row = conn.execute(
+                    "SELECT * FROM docker_endpoints WHERE enabled = 1 ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()
+            if not row:
+                row = conn.execute(
+                    "SELECT * FROM docker_endpoints ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()
+            return _row_endpoint(row)
+        finally:
+            conn.close()
+
+
+def get_active_endpoint_id() -> str:
+    ensure_default_endpoint()
+    raw = get_meta(META_ACTIVE_ENDPOINT)
+    if raw:
+        ep = get_endpoint(raw)
+        if ep and ep.get("enabled"):
+            return raw
+    default = get_default_endpoint()
+    set_meta(META_ACTIVE_ENDPOINT, default["id"])
+    return default["id"]
+
+
+def set_active_endpoint_id(endpoint_id: str) -> dict[str, Any]:
+    ep = get_endpoint(endpoint_id)
+    if not ep:
+        raise KeyError("endpoint_not_found")
+    if not ep.get("enabled"):
+        raise ValueError("endpoint_disabled")
+    set_meta(META_ACTIVE_ENDPOINT, endpoint_id)
+    return ep
+
+
+def create_endpoint(
+    name: str,
+    docker_host: str,
+    *,
+    tls_enabled: bool = False,
+    tls_ca: str = "",
+    tls_cert: str = "",
+    tls_key: str = "",
+    verify_tls: bool = True,
+    is_default: bool = False,
+    notes: str = "",
+) -> dict[str, Any]:
+    eid = uuid.uuid4().hex
+    now = time.time()
+    name = (name or "").strip()
+    docker_host = (docker_host or "").strip()
+    if not name:
+        raise ValueError("name_required")
+    if not docker_host:
+        raise ValueError("docker_host_required")
+    with _lock:
+        conn = connect()
+        try:
+            if is_default:
+                conn.execute("UPDATE docker_endpoints SET is_default = 0")
+            conn.execute(
+                """
+                INSERT INTO docker_endpoints (
+                    id, name, docker_host, tls_enabled, tls_ca, tls_cert, tls_key,
+                    verify_tls, is_default, enabled, notes, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                """,
+                (
+                    eid,
+                    name,
+                    docker_host,
+                    1 if tls_enabled else 0,
+                    tls_ca or "",
+                    tls_cert or "",
+                    tls_key or "",
+                    1 if verify_tls else 0,
+                    1 if is_default else 0,
+                    1,
+                    notes or "",
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute("SELECT * FROM docker_endpoints WHERE id = ?", (eid,)).fetchone()
+            return _row_endpoint(row)
+        except sqlite3.IntegrityError as e:
+            raise ValueError("name_exists") from e
+        finally:
+            conn.close()
+
+
+def update_endpoint(endpoint_id: str, **fields: Any) -> dict[str, Any]:
+    ep = get_endpoint(endpoint_id)
+    if not ep:
+        raise KeyError("endpoint_not_found")
+    allowed = {
+        "name",
+        "docker_host",
+        "tls_enabled",
+        "tls_ca",
+        "tls_cert",
+        "tls_key",
+        "verify_tls",
+        "is_default",
+        "enabled",
+        "notes",
+    }
+    patch = {k: v for k, v in fields.items() if k in allowed and v is not None}
+    if "name" in patch:
+        patch["name"] = str(patch["name"]).strip()
+        if not patch["name"]:
+            raise ValueError("name_required")
+    if "docker_host" in patch:
+        patch["docker_host"] = str(patch["docker_host"]).strip()
+        if not patch["docker_host"]:
+            raise ValueError("docker_host_required")
+    for b in ("tls_enabled", "verify_tls", "is_default", "enabled"):
+        if b in patch:
+            patch[b] = 1 if patch[b] else 0
+    if not patch:
+        return ep
+    now = time.time()
+    cols = ", ".join(f"{k} = ?" for k in patch)
+    vals = list(patch.values()) + [now, endpoint_id]
+    with _lock:
+        conn = connect()
+        try:
+            if patch.get("is_default") == 1:
+                conn.execute(
+                    "UPDATE docker_endpoints SET is_default = 0 WHERE id != ?",
+                    (endpoint_id,),
+                )
+            conn.execute(
+                f"UPDATE docker_endpoints SET {cols}, updated_at = ? WHERE id = ?",
+                vals,
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM docker_endpoints WHERE id = ?", (endpoint_id,)
+            ).fetchone()
+            return _row_endpoint(row)
+        except sqlite3.IntegrityError as e:
+            raise ValueError("name_exists") from e
+        finally:
+            conn.close()
+
+
+def delete_endpoint(endpoint_id: str) -> None:
+    with _lock:
+        conn = connect()
+        try:
+            n = conn.execute("SELECT COUNT(*) AS c FROM docker_endpoints").fetchone()["c"]
+            if int(n) <= 1:
+                raise ValueError("cannot_delete_last")
+            row = conn.execute(
+                "SELECT * FROM docker_endpoints WHERE id = ?", (endpoint_id,)
+            ).fetchone()
+            if not row:
+                raise KeyError("endpoint_not_found")
+            conn.execute("DELETE FROM docker_endpoints WHERE id = ?", (endpoint_id,))
+            # if deleted was default, promote another
+            if row["is_default"]:
+                other = conn.execute(
+                    "SELECT id FROM docker_endpoints ORDER BY created_at ASC LIMIT 1"
+                ).fetchone()
+                if other:
+                    conn.execute(
+                        "UPDATE docker_endpoints SET is_default = 1 WHERE id = ?",
+                        (other["id"],),
+                    )
+            # fix active meta
+            active = conn.execute(
+                "SELECT value FROM app_meta WHERE key = ?", (META_ACTIVE_ENDPOINT,)
+            ).fetchone()
+            if active and active["value"] == endpoint_id:
+                fallback = conn.execute(
+                    "SELECT id FROM docker_endpoints WHERE is_default = 1 LIMIT 1"
+                ).fetchone()
+                if not fallback:
+                    fallback = conn.execute(
+                        "SELECT id FROM docker_endpoints ORDER BY created_at ASC LIMIT 1"
+                    ).fetchone()
+                if fallback:
+                    now = time.time()
+                    conn.execute(
+                        """
+                        INSERT INTO app_meta (key, value, updated_at) VALUES (?,?,?)
+                        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+                        """,
+                        (META_ACTIVE_ENDPOINT, fallback["id"], now),
+                    )
+            conn.commit()
+        finally:
+            conn.close()

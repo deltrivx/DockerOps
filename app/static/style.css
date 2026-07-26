@@ -278,6 +278,25 @@ body.reduce-motion #particles {
   flex-wrap: wrap;
   justify-content: flex-end;
 }
+.endpoint-select-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-width: 0;
+}
+.endpoint-select-label {
+  white-space: nowrap;
+}
+.endpoint-select {
+  min-width: 7.5rem;
+  max-width: 11rem;
+  padding: 0.28rem 0.45rem;
+  font-size: 0.8rem;
+}
+table.endpoints-table td.col-actions {
+  width: 28%;
+  min-width: 8rem;
+}
 
 a { color: var(--cyan); }
 .muted { color: var(--muted); }
@@ -1513,6 +1532,16 @@ body.auth-locked .shell {
     align-items: center;
     justify-content: flex-start;
     gap: 0.4rem;
+    width: 100%;
+  }
+  .endpoint-select-wrap {
+    width: 100%;
+    order: -1;
+  }
+  .endpoint-select {
+    flex: 1 1 auto;
+    max-width: none;
+    min-width: 0;
     width: 100%;
   }
   .header-actions .badge {

@@ -38,20 +38,41 @@ from config import (
     get_settings,
     read_process_proxy,
 )
-from db import audit, init_db
+from db import (
+    audit,
+    create_endpoint,
+    delete_endpoint,
+    get_active_endpoint_id,
+    get_endpoint,
+    init_db,
+    list_endpoints,
+    set_active_endpoint_id,
+    update_endpoint,
+)
 from docker_client import (
     connect_network,
     disconnect_network,
     exec_create,
     exec_resize,
     exec_start_socket,
+    get_client,
     get_container,
     image_history,
+    invalidate_client,
     list_containers,
     list_running_stats,
     ping,
     refresh_template_name_cache,
+    reset_request_endpoint,
     resolve_shell_cmd,
+    set_request_endpoint,
+)
+from endpoints import (
+    endpoint_capabilities,
+    is_local_host,
+    public_endpoint,
+    require_local_endpoint,
+    validate_docker_host,
 )
 from docker_resources import (
     activity_stats,
@@ -72,7 +93,7 @@ from docker_resources import (
     volumes_prune,
     volumes_remove,
 )
-from db import get_meta, set_meta
+from db import get_meta, set_meta  # noqa: E402 — re-export style keep near meta helpers
 from doctor import diagnose_all, diagnose_one
 from events_stream import recent_events, sse_docker_events
 from host_platform import platform_info
@@ -98,8 +119,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.8"
+VERSION = "0.6.0"
 CHANGELOG = [
+    {
+        "version": "0.6.0",
+        "date": "2026-07-27",
+        "items": [
+            "多 Docker 端点：本机 unix sock + 远程 tcp://（可选 TLS）",
+            "顶栏切换活动端点；系统设置增删改 / 连通性测试",
+            "远程端点开放容器/镜像/网络/卷/日志/终端/更新检测；Compose 与 Unraid 仅本地",
+        ],
+    },
     {
         "version": "0.5.8",
         "date": "2026-07-27",
@@ -357,6 +387,32 @@ class PullBody(BaseModel):
     image: str = Field(..., description="镜像名:tag")
 
 
+class EndpointBody(BaseModel):
+    name: str = Field(..., min_length=1, max_length=64)
+    docker_host: str = Field(..., min_length=3, max_length=512)
+    tls_enabled: bool = False
+    tls_ca: str = ""
+    tls_cert: str = ""
+    tls_key: str = ""
+    verify_tls: bool = True
+    is_default: bool = False
+    notes: str = ""
+    enabled: bool | None = None
+
+
+class EndpointPatchBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    docker_host: str | None = Field(default=None, min_length=3, max_length=512)
+    tls_enabled: bool | None = None
+    tls_ca: str | None = None
+    tls_cert: str | None = None
+    tls_key: str | None = None
+    verify_tls: bool | None = None
+    is_default: bool | None = None
+    notes: str | None = None
+    enabled: bool | None = None
+
+
 class NetworkCreateBody(BaseModel):
     name: str
     driver: str = "bridge"
@@ -497,6 +553,25 @@ def _resource_or_403() -> None:
         raise HTTPException(status_code=403, detail="资源 API 已关闭（DOCKEROPS_RESOURCE_APIS=false）")
 
 
+def _active_ep() -> dict[str, Any]:
+    eid = get_active_endpoint_id()
+    ep = get_endpoint(eid)
+    if not ep:
+        from db import get_default_endpoint
+
+        ep = get_default_endpoint()
+    return ep
+
+
+def _require_local_feature(feature: str) -> dict[str, Any]:
+    ep = _active_ep()
+    try:
+        require_local_endpoint(ep, feature)
+    except PermissionError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    return ep
+
+
 def _perm_http(fn, *args, **kwargs):
     try:
         return fn(*args, **kwargs)
@@ -506,9 +581,64 @@ def _perm_http(fn, *args, **kwargs):
         raise HTTPException(status_code=404, detail="资源不存在") from None
 
 
+def _test_endpoint_conn(ep: dict[str, Any]) -> dict[str, Any]:
+    """Ping an endpoint without permanently polluting cache if it fails badly."""
+    invalidate_client(ep["id"])
+    token = set_request_endpoint(ep["id"])
+    try:
+        c = get_client(ep["id"])
+        ok = c.ping()
+        version = c.version()
+        return {
+            "ok": bool(ok),
+            "api_version": version.get("ApiVersion"),
+            "engine_version": version.get("Version"),
+            "os": version.get("Os"),
+            "arch": version.get("Arch"),
+        }
+    except Exception as e:
+        invalidate_client(ep["id"])
+        return {"ok": False, "error": str(e)}
+    finally:
+        reset_request_endpoint(token)
+
+
+@app.middleware("http")
+async def endpoint_context_middleware(request: Request, call_next):
+    """Bind X-DockerOps-Endpoint / ?endpoint= for the request lifetime."""
+    eid = (
+        request.headers.get("X-DockerOps-Endpoint")
+        or request.query_params.get("endpoint")
+        or ""
+    ).strip() or None
+    if eid:
+        ep = get_endpoint(eid)
+        if not ep or not ep.get("enabled"):
+            eid = None
+    if not eid:
+        try:
+            eid = get_active_endpoint_id()
+        except Exception:
+            eid = None
+    token = set_request_endpoint(eid)
+    try:
+        response = await call_next(request)
+        if eid:
+            response.headers["X-DockerOps-Endpoint"] = eid
+        return response
+    finally:
+        reset_request_endpoint(token)
+
+
 @app.on_event("startup")
 def _startup() -> None:
     settings.ensure_dirs()
+    try:
+        from db import ensure_default_endpoint
+
+        ensure_default_endpoint()
+    except Exception:
+        pass
     refresh_template_name_cache()
     boot = bootstrap_from_env()
     try:
@@ -520,6 +650,11 @@ def _startup() -> None:
         plat = platform_info()
     except Exception as e:
         plat = {"error": str(e)}
+    active = {}
+    try:
+        active = _active_ep()
+    except Exception:
+        pass
     audit(
         "startup",
         actor="system",
@@ -533,6 +668,8 @@ def _startup() -> None:
             "needs_setup": auth_status().get("needs_setup"),
             "update_auto": get_update_auto_settings(),
             "proxy_source": _resolve_proxy_view().get("source"),
+            "active_endpoint": active.get("name"),
+            "active_docker_host": active.get("docker_host"),
         },
     )
     try:
@@ -549,6 +686,11 @@ def api_health() -> dict[str, Any]:
         platform_name = plat.get("platform")
     except Exception:
         platform_name = "unknown"
+    active = {}
+    try:
+        active = _active_ep()
+    except Exception:
+        pass
     return {
         "ok": True,
         "service": "dockerops",
@@ -556,6 +698,13 @@ def api_health() -> dict[str, Any]:
         "time": time.time(),
         "docker": engine,
         "platform": platform_name,
+        "endpoint": {
+            "id": active.get("id"),
+            "name": active.get("name"),
+            "docker_host": active.get("docker_host"),
+            "is_local": is_local_host(active.get("docker_host") or ""),
+            "capabilities": endpoint_capabilities(active) if active else {},
+        },
         "takeover_enabled": get_settings().takeover_enabled,
         "resource_apis": get_settings().resource_apis,
         "unraid_templates_available": templates_available(),
@@ -1046,6 +1195,18 @@ async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
         await websocket.close(code=4401, reason="需要登录")
         return
 
+    # Pin Docker endpoint for this console session (avoid cross-engine exec)
+    ep_q = (websocket.query_params.get("endpoint") or "").strip()
+    ep_row = get_endpoint(ep_q) if ep_q else None
+    if ep_row and ep_row.get("enabled"):
+        ep_id = ep_q
+    else:
+        try:
+            ep_id = get_active_endpoint_id()
+        except Exception:
+            ep_id = None
+    ep_token = set_request_endpoint(ep_id)
+
     shell = websocket.query_params.get("shell") or "sh"
     try:
         cols = max(20, min(int(websocket.query_params.get("cols") or 120), 400))
@@ -1196,7 +1357,12 @@ async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
                 lambda: audit(
                     "console_close",
                     actor=actor or "unknown",
-                    detail={"container": container_id, "shell": shell, "exec_id": (exec_id or "")[:24]},
+                    detail={
+                        "container": container_id,
+                        "shell": shell,
+                        "exec_id": (exec_id or "")[:24],
+                        "endpoint": ep_id,
+                    },
                 ),
             )
         except Exception:
@@ -1206,6 +1372,10 @@ async def ws_container_console(websocket: WebSocket, container_id: str) -> None:
                 closer = getattr(sock, "close", None)
                 if callable(closer):
                     closer()
+        except Exception:
+            pass
+        try:
+            reset_request_endpoint(ep_token)
         except Exception:
             pass
         try:
@@ -1500,6 +1670,121 @@ def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[s
     }
 
 
+# ── Docker endpoints (multi-engine) ───────────────────────
+
+
+@app.get("/api/endpoints")
+def api_endpoints_list(actor: OptionalUser = None) -> dict[str, Any]:
+    active_id = get_active_endpoint_id()
+    items = [public_endpoint(ep, active_id=active_id) for ep in list_endpoints()]
+    return {
+        "ok": True,
+        "items": items,
+        "active_id": active_id,
+        "viewer": actor,
+    }
+
+
+@app.post("/api/endpoints")
+def api_endpoints_create(body: EndpointBody, actor: AuthUser) -> dict[str, Any]:
+    try:
+        host = validate_docker_host(body.docker_host)
+        ep = create_endpoint(
+            name=body.name,
+            docker_host=host,
+            tls_enabled=body.tls_enabled,
+            tls_ca=body.tls_ca or "",
+            tls_cert=body.tls_cert or "",
+            tls_key=body.tls_key or "",
+            verify_tls=body.verify_tls,
+            is_default=body.is_default,
+            notes=body.notes or "",
+        )
+    except ValueError as e:
+        code = str(e)
+        msg = {
+            "name_required": "名称不能为空",
+            "docker_host_required": "Docker Host 不能为空",
+            "name_exists": "名称已存在",
+        }.get(code, code if "docker_host" in code or "格式" in code else str(e))
+        raise HTTPException(status_code=400, detail=msg) from e
+    audit("endpoint_create", actor=actor, detail={"id": ep["id"], "name": ep["name"], "host": ep["docker_host"]})
+    active_id = get_active_endpoint_id()
+    return {"ok": True, "item": public_endpoint(ep, active_id=active_id), "message": "端点已创建"}
+
+
+@app.put("/api/endpoints/{endpoint_id}")
+def api_endpoints_update(endpoint_id: str, body: EndpointPatchBody, actor: AuthUser) -> dict[str, Any]:
+    data = body.model_dump(exclude_none=True)
+    if "docker_host" in data:
+        try:
+            data["docker_host"] = validate_docker_host(data["docker_host"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    try:
+        ep = update_endpoint(endpoint_id, **data)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="端点不存在") from None
+    except ValueError as e:
+        code = str(e)
+        msg = {
+            "name_required": "名称不能为空",
+            "docker_host_required": "Docker Host 不能为空",
+            "name_exists": "名称已存在",
+        }.get(code, str(e))
+        raise HTTPException(status_code=400, detail=msg) from e
+    invalidate_client(endpoint_id)
+    audit("endpoint_update", actor=actor, detail={"id": endpoint_id, "fields": list(data.keys())})
+    active_id = get_active_endpoint_id()
+    return {"ok": True, "item": public_endpoint(ep, active_id=active_id), "message": "端点已更新"}
+
+
+@app.delete("/api/endpoints/{endpoint_id}")
+def api_endpoints_delete(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
+    try:
+        delete_endpoint(endpoint_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="端点不存在") from None
+    except ValueError as e:
+        if str(e) == "cannot_delete_last":
+            raise HTTPException(status_code=400, detail="不能删除最后一个端点") from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    invalidate_client(endpoint_id)
+    audit("endpoint_delete", actor=actor, detail={"id": endpoint_id})
+    return {"ok": True, "message": "端点已删除", "active_id": get_active_endpoint_id()}
+
+
+@app.post("/api/endpoints/{endpoint_id}/activate")
+def api_endpoints_activate(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
+    try:
+        ep = set_active_endpoint_id(endpoint_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="端点不存在") from None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="端点已禁用") from None
+    audit("endpoint_activate", actor=actor, detail={"id": endpoint_id, "name": ep.get("name")})
+    return {
+        "ok": True,
+        "item": public_endpoint(ep, active_id=endpoint_id),
+        "active_id": endpoint_id,
+        "message": f"已切换到「{ep.get('name')}」",
+    }
+
+
+@app.post("/api/endpoints/{endpoint_id}/test")
+def api_endpoints_test(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
+    ep = get_endpoint(endpoint_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="端点不存在")
+    result = _test_endpoint_conn(ep)
+    return {
+        "ok": bool(result.get("ok")),
+        "docker": result,
+        "item": public_endpoint(ep, active_id=get_active_endpoint_id()),
+        "message": "连通正常" if result.get("ok") else f"连通失败：{result.get('error') or 'unknown'}",
+    }
+
+
 # ── Compose ──────────────────────────────────────────────
 
 
@@ -1507,6 +1792,16 @@ def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[s
 def api_compose_projects(actor: OptionalUser = None) -> dict[str, Any]:
     if not get_settings().compose_enabled:
         return {"ok": True, "items": [], "disabled": True, "viewer": actor}
+    ep = _active_ep()
+    if not is_local_host(ep.get("docker_host") or ""):
+        return {
+            "ok": True,
+            "items": [],
+            "disabled": True,
+            "remote_only_local": True,
+            "message": "Compose 仅支持本地 unix 端点，请切换到本机端点",
+            "viewer": actor,
+        }
     items = list_projects()
     return {"ok": True, "count": len(items), "items": items, "viewer": actor}
 
@@ -1521,23 +1816,27 @@ def api_compose_project(name: str, actor: OptionalUser = None) -> dict[str, Any]
 
 @app.post("/api/compose/projects/{name}/backup")
 def api_compose_backup(name: str, actor: AuthUser) -> dict[str, Any]:
+    _require_local_feature("Compose")
     return backup_project(name, actor=actor)
 
 
 @app.post("/api/compose/projects/{name}/update")
 def api_compose_update(name: str, body: ComposeUpdateBody, actor: AuthUser) -> dict[str, Any]:
+    _require_local_feature("Compose")
     return safe_update_project(name, actor=actor, service=body.service, recreate=body.recreate)
 
 
 @app.post("/api/compose/projects/{name}/up")
 def api_compose_up(name: str, actor: AuthUser) -> dict[str, Any]:
     _takeover_or_403()
+    _require_local_feature("Compose")
     return project_up(name, actor=actor)
 
 
 @app.post("/api/compose/projects/{name}/down")
 def api_compose_down(name: str, actor: AuthUser) -> dict[str, Any]:
     _takeover_or_403()
+    _require_local_feature("Compose")
     return project_down(name, actor=actor)
 
 
@@ -1548,6 +1847,18 @@ def api_compose_down(name: str, actor: AuthUser) -> dict[str, Any]:
 def api_unraid_templates(actor: OptionalUser = None) -> dict[str, Any]:
     if not get_settings().unraid_enabled:
         return {"ok": True, "items": [], "disabled": True, "viewer": actor}
+    ep = _active_ep()
+    if not is_local_host(ep.get("docker_host") or ""):
+        return {
+            "ok": True,
+            "items": [],
+            "available": False,
+            "disabled": True,
+            "remote_only_local": True,
+            "path": str(get_settings().unraid_templates_path()),
+            "message": "Unraid 模板仅支持本地 unix 端点，请切换到本机端点",
+            "viewer": actor,
+        }
     available = templates_available()
     items = list_templates() if available else []
     return {
@@ -1562,6 +1873,7 @@ def api_unraid_templates(actor: OptionalUser = None) -> dict[str, Any]:
 
 @app.get("/api/unraid/templates/{name}")
 def api_unraid_template(name: str, actor: OptionalUser = None) -> dict[str, Any]:
+    _require_local_feature("Unraid 模板")
     tpl = get_template(name)
     if not tpl:
         raise HTTPException(status_code=404, detail="Unraid 模板不存在或目录未挂载")
@@ -1570,11 +1882,13 @@ def api_unraid_template(name: str, actor: OptionalUser = None) -> dict[str, Any]
 
 @app.post("/api/unraid/templates/{name}/backup")
 def api_unraid_backup(name: str, actor: AuthUser) -> dict[str, Any]:
+    _require_local_feature("Unraid 模板")
     return backup_template(name, actor=actor)
 
 
 @app.post("/api/unraid/templates/{name}/update")
 def api_unraid_update(name: str, body: UnraidUpdateBody, actor: AuthUser) -> dict[str, Any]:
+    _require_local_feature("Unraid 模板")
     return safe_update_unraid(
         name, actor=actor, repository=body.repository, recreate=body.recreate
     )
@@ -1583,6 +1897,7 @@ def api_unraid_update(name: str, body: UnraidUpdateBody, actor: AuthUser) -> dic
 @app.post("/api/unraid/adopt/{container_id}")
 def api_unraid_adopt(container_id: str, actor: AuthUser) -> dict[str, Any]:
     _takeover_or_403()
+    _require_local_feature("Unraid 模板")
     return adopt_to_unraid(container_id, actor=actor)
 
 

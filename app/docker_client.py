@@ -1,23 +1,178 @@
 from __future__ import annotations
 
+import contextvars
+import os
+import tempfile
+import threading
+from pathlib import Path
 from typing import Any
 
 import docker
 from docker.errors import DockerException, NotFound
+from docker.tls import TLSConfig
 
 from config import get_settings
 from manager import classify_container, list_unraid_template_names
 
-_client: docker.DockerClient | None = None
+# Request-scoped endpoint override (set by middleware / WS handlers)
+_endpoint_ctx: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "dockerops_endpoint_id", default=None
+)
+
+_clients: dict[str, docker.DockerClient] = {}
+_clients_lock = threading.Lock()
 _template_names_cache: set[str] | None = None
+# temp files for PEM material (tls) keyed by endpoint id
+_tls_tmp: dict[str, list[str]] = {}
 
 
-def get_client() -> docker.DockerClient:
-    global _client
-    if _client is None:
+def set_request_endpoint(endpoint_id: str | None) -> contextvars.Token:
+    return _endpoint_ctx.set(endpoint_id)
+
+
+def reset_request_endpoint(token: contextvars.Token) -> None:
+    _endpoint_ctx.reset(token)
+
+
+def get_request_endpoint() -> str | None:
+    return _endpoint_ctx.get()
+
+
+def _write_pem_tmp(prefix: str, content: str) -> str:
+    fd, path = tempfile.mkstemp(prefix=f"dockerops-{prefix}-", suffix=".pem")
+    with os.fdopen(fd, "w") as f:
+        f.write(content)
+    try:
+        os.chmod(path, 0o600)
+    except Exception:
+        pass
+    return path
+
+
+def _build_tls(ep: dict[str, Any]) -> TLSConfig | bool | None:
+    if not ep.get("tls_enabled"):
+        return None
+    ca = (ep.get("tls_ca") or "").strip()
+    cert = (ep.get("tls_cert") or "").strip()
+    key = (ep.get("tls_key") or "").strip()
+    verify = bool(ep.get("verify_tls", True))
+    # Paths on disk
+    ca_path = ca if ca and Path(ca).is_file() else None
+    cert_path = cert if cert and Path(cert).is_file() else None
+    key_path = key if key and Path(key).is_file() else None
+    # Or PEM body → temp files
+    tmp_paths: list[str] = []
+    try:
+        if ca and not ca_path and "BEGIN" in ca:
+            ca_path = _write_pem_tmp("ca", ca)
+            tmp_paths.append(ca_path)
+        if cert and not cert_path and "BEGIN" in cert:
+            cert_path = _write_pem_tmp("cert", cert)
+            tmp_paths.append(cert_path)
+        if key and not key_path and "BEGIN" in key:
+            key_path = _write_pem_tmp("key", key)
+            tmp_paths.append(key_path)
+        if tmp_paths:
+            _tls_tmp[ep["id"]] = tmp_paths
+        if not ca_path and not cert_path:
+            # tls enabled but no material: still request TLS (daemon may use system CA)
+            return True if verify else TLSConfig(verify=False)
+        client_cert = None
+        if cert_path and key_path:
+            client_cert = (cert_path, key_path)
+        return TLSConfig(
+            client_cert=client_cert,
+            ca_cert=ca_path,
+            verify=verify if ca_path or verify else False,
+        )
+    except Exception:
+        for p in tmp_paths:
+            try:
+                os.unlink(p)
+            except Exception:
+                pass
+        raise
+
+
+def _resolve_endpoint_id(endpoint_id: str | None) -> str:
+    if endpoint_id:
+        return endpoint_id
+    ctx = _endpoint_ctx.get()
+    if ctx:
+        return ctx
+    # late import to avoid circular at module load
+    from db import get_active_endpoint_id
+
+    return get_active_endpoint_id()
+
+
+def _load_endpoint(endpoint_id: str) -> dict[str, Any]:
+    from db import get_endpoint, get_default_endpoint, ensure_default_endpoint
+
+    ensure_default_endpoint()
+    ep = get_endpoint(endpoint_id)
+    if not ep:
+        ep = get_default_endpoint()
+    if not ep:
         settings = get_settings()
-        _client = docker.DockerClient(base_url=settings.docker_host)
-    return _client
+        return {
+            "id": "env",
+            "name": "本机",
+            "docker_host": settings.docker_host,
+            "tls_enabled": False,
+            "tls_ca": "",
+            "tls_cert": "",
+            "tls_key": "",
+            "verify_tls": True,
+            "enabled": True,
+        }
+    return ep
+
+
+def invalidate_client(endpoint_id: str | None = None) -> None:
+    """Close and drop cached client(s)."""
+    with _clients_lock:
+        if endpoint_id is None:
+            ids = list(_clients.keys())
+        else:
+            ids = [endpoint_id] if endpoint_id in _clients else []
+        for eid in ids:
+            c = _clients.pop(eid, None)
+            if c is not None:
+                try:
+                    c.close()
+                except Exception:
+                    pass
+            for p in _tls_tmp.pop(eid, []):
+                try:
+                    os.unlink(p)
+                except Exception:
+                    pass
+
+
+def get_client(endpoint_id: str | None = None) -> docker.DockerClient:
+    """
+    Return a Docker client for the given endpoint (or request-scoped / active).
+    Clients are cached per endpoint id.
+    """
+    eid = _resolve_endpoint_id(endpoint_id)
+    with _clients_lock:
+        existing = _clients.get(eid)
+        if existing is not None:
+            return existing
+        ep = _load_endpoint(eid)
+        # if id was missing, cache under resolved id
+        eid = ep.get("id") or eid
+        if eid in _clients:
+            return _clients[eid]
+        base_url = ep.get("docker_host") or get_settings().docker_host
+        tls = _build_tls(ep)
+        kwargs: dict[str, Any] = {"base_url": base_url}
+        if tls is not None:
+            kwargs["tls"] = tls
+        client = docker.DockerClient(**kwargs)
+        _clients[eid] = client
+        return client
 
 
 def refresh_template_name_cache() -> set[str]:

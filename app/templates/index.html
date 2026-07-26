@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.5.8') }}" />
-  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.5.8') }}" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.6.0') }}" />
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.6.0') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -58,7 +58,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.5.8 · —
+        v0.6.0 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -73,6 +73,12 @@
           </div>
         </div>
         <div class="header-actions">
+          <label class="endpoint-select-wrap" title="Docker 端点">
+            <span class="endpoint-select-label muted small">端点</span>
+            <select id="endpoint-select" class="input select endpoint-select" aria-label="Docker 端点">
+              <option value="">本机</option>
+            </select>
+          </label>
           <div id="platform-badge" class="badge">平台: --</div>
           <div id="takeover-badge" class="badge">接管: --</div>
           <div id="auth-state" class="muted">未登录</div>
@@ -572,6 +578,63 @@
           </div>
 
           <div class="settings-section" style="margin-top:0;padding-top:0;border-top:none">
+            <h3>Docker 端点</h3>
+            <p class="muted small">
+              默认本机 <code>unix:///var/run/docker.sock</code>。可添加远程
+              <code>tcp://host:2375</code>（明文）或 <code>tcp://host:2376</code> + TLS。
+              活动端点决定容器/镜像等资源视图；Compose 与 Unraid 模板仅本地 unix 端点可用。
+            </p>
+            <div class="table-wrap">
+              <table class="data-table endpoints-table">
+                <thead>
+                  <tr>
+                    <th class="cell-text">名称 / Host</th>
+                    <th class="col-status">类型</th>
+                    <th class="col-status">状态</th>
+                    <th class="cell-text">能力</th>
+                    <th class="col-actions">操作</th>
+                  </tr>
+                </thead>
+                <tbody id="endpoint-rows">
+                  <tr><td colspan="5" class="muted">加载中…</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="settings-grid mt" id="endpoint-form">
+              <label class="setting-row">
+                <span>名称</span>
+                <input type="text" class="input" id="ep-name" placeholder="例如：备用 NAS" autocomplete="off" />
+              </label>
+              <label class="setting-row">
+                <span>Docker Host</span>
+                <input type="text" class="input" id="ep-host" placeholder="tcp://192.168.1.20:2375" autocomplete="off" />
+              </label>
+              <label class="setting-row">
+                <span>启用 TLS</span>
+                <input type="checkbox" id="ep-tls" />
+              </label>
+              <label class="setting-row">
+                <span>校验证书</span>
+                <input type="checkbox" id="ep-verify-tls" checked />
+              </label>
+              <label class="setting-row" style="grid-column:1/-1">
+                <span>CA / Cert / Key（PEM 或路径，可选）</span>
+                <textarea class="input" id="ep-tls-ca" rows="2" placeholder="CA PEM（可选）"></textarea>
+                <textarea class="input" id="ep-tls-cert" rows="2" placeholder="客户端证书 PEM（可选）" style="margin-top:0.35rem"></textarea>
+                <textarea class="input" id="ep-tls-key" rows="2" placeholder="客户端私钥 PEM（可选）" style="margin-top:0.35rem"></textarea>
+              </label>
+              <label class="setting-row" style="grid-column:1/-1">
+                <span>备注</span>
+                <input type="text" class="input" id="ep-notes" placeholder="可选说明" autocomplete="off" />
+              </label>
+            </div>
+            <div class="toolbar mt">
+              <button type="button" class="btn primary" id="btn-ep-create">添加端点</button>
+              <span class="muted small" id="ep-form-status"></span>
+            </div>
+          </div>
+
+          <div class="settings-section">
             <h3>网络代理 <span id="proxy-env-badge" class="env-lock-badge" hidden>来自环境变量</span></h3>
             <p class="muted small">
               支持容器变量 <code>HTTP_PROXY</code> / <code>HTTPS_PROXY</code> / <code>NO_PROXY</code>
@@ -657,7 +720,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.5.8</span> ·
+        DockerOps <span id="foot-version">v0.6.0</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -776,9 +839,9 @@
     <div id="image-detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.5.8') }}"></script>
-  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.5.8') }}"></script>
-  <script src="/static/particles.js?v={{ asset_v|default('0.5.8') }}"></script>
-  <script src="/static/app.js?v={{ asset_v|default('0.5.8') }}"></script>
+  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.6.0') }}"></script>
+  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.6.0') }}"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.6.0') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.6.0') }}"></script>
 </body>
 </html>

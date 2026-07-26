@@ -4,8 +4,11 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.5.8",
+  version: "0.6.0",
   tab: "overview",
+  endpoints: [],
+  endpointId: localStorage.getItem("dockerops_endpoint") || "",
+  endpoint: null,
   /** Live log stream controller */
   logs: {
     id: null,
@@ -71,8 +74,10 @@ const TAB_TITLES = {
   volumes: ["卷", "列表 · 创建 · 清理"],
   system: ["系统", "Engine · 磁盘占用 · 清理"],
   docs: ["说明日志", "使用说明 · 版本更新日志"],
-  settings: ["系统设置", "代理 · 自动更新 · 个性化"],
+  settings: ["系统设置", "Docker 端点 · 代理 · 自动更新 · 个性化"],
 };
+
+const ENDPOINT_STORAGE_KEY = "dockerops_endpoint";
 
 const TAB_KEYS = Object.keys(TAB_TITLES);
 const TAB_STORAGE_KEY = "dockerops_tab";
@@ -121,6 +126,7 @@ const $ = (sel) => document.querySelector(sel);
 function authHeaders() {
   const h = { "Content-Type": "application/json" };
   if (state.token) h.Authorization = `Bearer ${state.token}`;
+  if (state.endpointId) h["X-DockerOps-Endpoint"] = state.endpointId;
   return h;
 }
 
@@ -242,10 +248,232 @@ function setAuthUI() {
   pb.textContent = platformLabel(state.platform);
   pb.className = `badge platform-${state.platform || "generic"}`;
   setVersionUI();
+  renderEndpointSelect();
   const cancel = $("#login-cancel");
   if (cancel) {
     // Allow cancel only when already logged-in session is open for re-auth; gate is forced otherwise
     cancel.hidden = !state.token;
+  }
+}
+
+function applyEndpoints(data) {
+  const items = data?.items || [];
+  state.endpoints = items;
+  const activeId = data?.active_id || state.endpointId || "";
+  if (activeId) {
+    state.endpointId = activeId;
+    try {
+      localStorage.setItem(ENDPOINT_STORAGE_KEY, activeId);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+  state.endpoint = items.find((e) => e.id === state.endpointId) || items[0] || null;
+  if (state.endpoint && state.endpoint.id !== state.endpointId) {
+    state.endpointId = state.endpoint.id;
+  }
+  renderEndpointSelect();
+  renderEndpointsTable();
+}
+
+function renderEndpointSelect() {
+  const sel = $("#endpoint-select");
+  if (!sel) return;
+  const items = state.endpoints || [];
+  const cur = state.endpointId || "";
+  const opts = items.length
+    ? items
+        .map(
+          (e) =>
+            `<option value="${escapeHtml(e.id)}" ${e.id === cur ? "selected" : ""}>${escapeHtml(
+              e.name || e.docker_host || e.id
+            )}${e.is_local ? "" : " · 远程"}</option>`
+        )
+        .join("")
+    : `<option value="">本机</option>`;
+  sel.innerHTML = opts;
+  sel.disabled = !items.length;
+  sel.title = state.endpoint
+    ? `${state.endpoint.name} · ${state.endpoint.docker_host}`
+    : "Docker 端点";
+}
+
+function renderEndpointsTable() {
+  const tbody = $("#endpoint-rows");
+  if (!tbody) return;
+  const items = state.endpoints || [];
+  const active = state.endpointId || "";
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="muted">暂无端点（启动后会自动创建「本机」）</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = "";
+  items.forEach((e) => {
+    const tr = document.createElement("tr");
+    const caps = e.capabilities || {};
+    const badge = e.is_active || e.id === active
+      ? `<span class="pill running">活动</span>`
+      : e.is_default
+        ? `<span class="pill">默认</span>`
+        : "";
+    const kind = e.is_local ? "本地" : "远程";
+    tr.innerHTML = `
+      <td class="cell-text"><strong class="cell-clip">${escapeHtml(e.name || "")}</strong>
+        <div class="muted small cell-clip">${escapeHtml(e.docker_host || "")}</div></td>
+      <td class="col-status">${escapeHtml(kind)} ${e.tls_enabled ? "· TLS" : ""}</td>
+      <td class="col-status">${badge}</td>
+      <td class="cell-text muted small">${caps.compose ? "Compose " : ""}${caps.unraid ? "Unraid " : ""}${
+      caps.console ? "终端" : ""
+    }</td>
+      <td class="col-actions actions"></td>
+    `;
+    const actions = tr.querySelector(".actions");
+    const primary = [];
+    if (!(e.is_active || e.id === active)) {
+      primary.push({
+        label: "切换",
+        primary: true,
+        fn: () => activateEndpoint(e.id),
+      });
+    }
+    primary.push({ label: "测试", fn: () => testEndpoint(e.id) });
+    const more = [
+      {
+        label: "设为默认",
+        fn: () => updateEndpoint(e.id, { is_default: true }),
+        disabled: !!e.is_default,
+      },
+      {
+        label: "删除",
+        danger: true,
+        fn: () => deleteEndpoint(e.id),
+        disabled: items.length <= 1,
+      },
+    ];
+    fillActionGroup(actions, primary, more);
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadEndpoints() {
+  try {
+    const data = await api("/api/endpoints");
+    applyEndpoints(data);
+    return data;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function activateEndpoint(id) {
+  if (!id || id === state.endpointId) return;
+  if (!requireLogin()) return;
+  try {
+    const r = await api(`/api/endpoints/${encodeURIComponent(id)}/activate`, {
+      method: "POST",
+      body: "{}",
+    });
+    state.endpointId = r.active_id || id;
+    try {
+      localStorage.setItem(ENDPOINT_STORAGE_KEY, state.endpointId);
+    } catch (_) {
+      /* ignore */
+    }
+    applyEndpoints({ items: state.endpoints.map((x) => ({ ...x, is_active: x.id === state.endpointId })), active_id: state.endpointId });
+    await loadEndpoints();
+    await loadAll({ banner: true });
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function testEndpoint(id) {
+  if (!requireLogin()) return;
+  try {
+    const r = await api(`/api/endpoints/${encodeURIComponent(id)}/test`, {
+      method: "POST",
+      body: "{}",
+    });
+    alert(r.message || (r.ok ? "连通正常" : "连通失败"));
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function updateEndpoint(id, patch) {
+  if (!requireLogin()) return;
+  try {
+    await api(`/api/endpoints/${encodeURIComponent(id)}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    });
+    await loadEndpoints();
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function deleteEndpoint(id) {
+  if (!requireLogin()) return;
+  if (!confirm("确定删除该 Docker 端点？")) return;
+  try {
+    const r = await api(`/api/endpoints/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (r.active_id) {
+      state.endpointId = r.active_id;
+      try {
+        localStorage.setItem(ENDPOINT_STORAGE_KEY, state.endpointId);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    await loadEndpoints();
+    await loadAll({ banner: true });
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function createEndpointFromForm() {
+  if (!requireLogin()) return;
+  const name = ($("#ep-name")?.value || "").trim();
+  const docker_host = ($("#ep-host")?.value || "").trim();
+  const tls_enabled = !!$("#ep-tls")?.checked;
+  const verify_tls = !!$("#ep-verify-tls")?.checked;
+  const tls_ca = ($("#ep-tls-ca")?.value || "").trim();
+  const tls_cert = ($("#ep-tls-cert")?.value || "").trim();
+  const tls_key = ($("#ep-tls-key")?.value || "").trim();
+  const notes = ($("#ep-notes")?.value || "").trim();
+  const status = $("#ep-form-status");
+  if (!name || !docker_host) {
+    if (status) status.textContent = "请填写名称与 Docker Host";
+    return;
+  }
+  try {
+    if (status) status.textContent = "创建中…";
+    await api("/api/endpoints", {
+      method: "POST",
+      body: JSON.stringify({
+        name,
+        docker_host,
+        tls_enabled,
+        verify_tls,
+        tls_ca,
+        tls_cert,
+        tls_key,
+        notes,
+      }),
+    });
+    if (status) status.textContent = "已创建";
+    ["#ep-name", "#ep-host", "#ep-tls-ca", "#ep-tls-cert", "#ep-tls-key", "#ep-notes"].forEach(
+      (s) => {
+        const el = $(s);
+        if (el) el.value = "";
+      }
+    );
+    if ($("#ep-tls")) $("#ep-tls").checked = false;
+    await loadEndpoints();
+  } catch (e) {
+    if (status) status.textContent = e.message || String(e);
   }
 }
 
@@ -1137,7 +1365,7 @@ async function loadAll(opts = {}) {
     }
 
     // Fast path only — never wait on container stats (activity is deferred)
-    const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, sysPack, updStatus] =
+    const [doctor, containers, ops, health, summary, compose, unraid, platform, events, prefs, sysPack, updStatus, endpoints] =
       await Promise.all([
         api("/api/doctor"),
         api("/api/containers"),
@@ -1151,9 +1379,17 @@ async function loadAll(opts = {}) {
         api("/api/prefs").catch(() => ({ prefs: state.prefs })),
         api("/api/system/info").catch(() => ({ info: null })),
         api("/api/ops/update-status").catch(() => null),
+        api("/api/endpoints").catch(() => null),
       ]);
 
     if (seq !== state.loadSeq) return;
+
+    if (endpoints) applyEndpoints(endpoints);
+    else if (health.endpoint?.id) {
+      state.endpointId = health.endpoint.id;
+      state.endpoint = health.endpoint;
+      renderEndpointSelect();
+    }
 
     state.takeover = !!summary.takeover_enabled;
     state.consoleEnabled = !!(
@@ -2130,6 +2366,7 @@ function connectConsole() {
     cols: String(cols),
     rows: String(rows),
   });
+  if (state.endpointId) qs.set("endpoint", state.endpointId);
   const url = `${proto}//${location.host}/api/containers/${encodeURIComponent(id)}/console?${qs}`;
   const st = $("#console-status");
   if (st) st.textContent = "连接中…";
@@ -2820,6 +3057,19 @@ $("#btn-save-prefs")?.addEventListener("click", async () => {
   } catch (e) {
     $("#prefs-status").textContent = e.message;
   }
+});
+
+$("#endpoint-select")?.addEventListener("change", (e) => {
+  const id = e.target.value;
+  if (id) activateEndpoint(id);
+});
+$("#btn-ep-create")?.addEventListener("click", () => createEndpointFromForm());
+$("#ep-tls")?.addEventListener("change", (e) => {
+  const on = !!e.target.checked;
+  ["#ep-tls-ca", "#ep-tls-cert", "#ep-tls-key"].forEach((s) => {
+    const el = $(s);
+    if (el) el.disabled = !on;
+  });
 });
 
 $("#btn-save-sys-settings")?.addEventListener("click", async () => {
