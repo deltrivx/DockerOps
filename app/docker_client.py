@@ -739,12 +739,74 @@ def remove_image(image_id: str, force: bool = False, noprune: bool = False) -> d
 
 
 def prune_images(dangling: bool = True) -> dict[str, Any]:
+    """
+    Prune images via Docker Engine API.
+
+    - dangling=True  → only untagged intermediate layers (docker image prune)
+    - dangling=False → all images not used by any container (docker image prune -a)
+
+    Critical: filters=None defaults to dangling-only on the daemon. Always pass
+    dangling true/false explicitly so "清理未使用" removes tagged unused images.
+    """
     c = get_client()
-    filters = {"dangling": True} if dangling else None
-    result = c.images.prune(filters=filters)
+    # Engine accepts bool or "true"/"false"; always send explicit value.
+    result = c.images.prune(filters={"dangling": bool(dangling)})
+    deleted = result.get("ImagesDeleted") or []
+    reclaimed = int(result.get("SpaceReclaimed") or 0)
+
+    # Fallback when prune -a returns empty but unused tagged images remain
+    # (seen on some engine/docker-py combos). Remove only images not referenced
+    # by any container; never touch in-use images.
+    if not dangling and not deleted:
+        used_ids: set[str] = set()
+        for ct in c.containers.list(all=True):
+            try:
+                img_id = (ct.attrs or {}).get("Image") or ""
+                if img_id:
+                    used_ids.add(img_id)
+                img = getattr(ct, "image", None)
+                if img is not None and getattr(img, "id", None):
+                    used_ids.add(img.id)
+            except Exception:
+                continue
+        removed: list[dict[str, Any]] = []
+        extra_reclaimed = 0
+        for im in c.images.list(all=False):
+            iid = getattr(im, "id", None) or ""
+            if not iid or iid in used_ids:
+                continue
+            tags = list(im.tags or [])
+            try:
+                size = int((im.attrs or {}).get("Size") or 0)
+            except Exception:
+                size = 0
+            # Untag/remove each tag; then remove by id if still present
+            targets = tags or [iid]
+            ok_any = False
+            for target in targets:
+                try:
+                    c.images.remove(image=target, force=False, noprune=False)
+                    removed.append({"Untagged": target})
+                    ok_any = True
+                except Exception:
+                    continue
+            if not ok_any:
+                try:
+                    c.images.remove(image=iid, force=False, noprune=False)
+                    removed.append({"Deleted": iid})
+                    ok_any = True
+                except Exception:
+                    continue
+            if ok_any:
+                extra_reclaimed += size
+        if removed:
+            deleted = removed
+            reclaimed = extra_reclaimed
+
     return {
-        "images_deleted": result.get("ImagesDeleted") or [],
-        "space_reclaimed": result.get("SpaceReclaimed") or 0,
+        "images_deleted": deleted,
+        "space_reclaimed": reclaimed,
+        "dangling_only": bool(dangling),
     }
 
 

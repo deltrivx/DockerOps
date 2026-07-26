@@ -98,8 +98,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.2"
+VERSION = "0.5.3"
 CHANGELOG = [
+    {
+        "version": "0.5.3",
+        "date": "2026-07-26",
+        "items": [
+            "表格去空洞：操作列左对齐紧贴内容；镜像/路径列吃满中间空白",
+            "常用操作外提：容器 启停/重启/日志/终端；更新/Compose/Unraid 主按钮不再塞进「更多」",
+            "镜像：移除「清理 dangling」；「清理未使用」显式 prune -a + 未引用镜像回退删除",
+        ],
+    },
     {
         "version": "0.5.2",
         "date": "2026-07-26",

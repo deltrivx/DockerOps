@@ -598,17 +598,18 @@ td.col-used, th.col-used { width: 5%; text-align: center; }
 td.col-id, th.col-id { width: 9%; }
 td.col-mgr, th.col-mgr { width: 8%; }
 td.col-run, th.col-run { width: 6%; text-align: center; }
-/* Actions: never flex the td; never max-width:0 — prefer room for primary buttons */
+/* Actions: never flex the td; never max-width:0 — pack buttons LEFT so no empty hole */
 td.col-actions, th.col-actions,
 td.actions {
   display: table-cell !important;
-  width: 28%;
+  width: 26%;
   max-width: none !important;
   overflow: visible !important;
   white-space: nowrap !important;
-  text-align: right;
+  text-align: left;
   vertical-align: middle;
-  padding-right: 0.55rem;
+  padding-left: 0.35rem;
+  padding-right: 0.4rem;
 }
 /* Global .mono uses pre-wrap for logs — force single-line inside tables */
 table .mono,
@@ -665,21 +666,39 @@ th.mono {
   color: #c4b5fd;
 }
 .tag-list .tag-more { display: none; }
-/* Images table: name flexible, actions wider for history/delete */
+/* Images table: name flexible; used-by readable; actions compact left-packed */
 table.images-table th.col-check,
-table.images-table td.col-check { width: 3%; }
+table.images-table td.col-check { width: 2.5%; }
 table.images-table th.cell-text,
-table.images-table td.cell-text { width: 34%; max-width: 0; }
+table.images-table td.cell-text { width: 30%; max-width: 0; }
 table.images-table th.col-id,
-table.images-table td.col-id { width: 9%; }
+table.images-table td.col-id { width: 10%; }
 table.images-table th.col-size,
 table.images-table td.col-size { width: 8%; }
 table.images-table th.col-date,
-table.images-table td.col-date { width: 10%; }
+table.images-table td.col-date { width: 11%; }
 table.images-table th.col-used,
-table.images-table td.col-used { width: 12%; max-width: 0; }
+table.images-table td.col-used { width: 16%; max-width: 0; }
 table.images-table th.col-actions,
-table.images-table td.col-actions { width: 24%; max-width: none !important; }
+table.images-table td.col-actions { width: 22.5%; max-width: none !important; }
+
+/* Per-table action column widths (match colgroup; kill middle void) */
+table.containers-table th.col-actions,
+table.containers-table td.col-actions { width: 26%; }
+table.updates-table th.col-actions,
+table.updates-table td.col-actions { width: 28.5%; }
+table.compose-table th.col-actions,
+table.compose-table td.col-actions { width: 26%; }
+table.unraid-table th.col-actions,
+table.unraid-table td.col-actions { width: 26%; }
+/* Detect result: content-sized, no stretch void */
+table.updates-table th.col-detect,
+table.updates-table td.col-detect {
+  width: 9%;
+  max-width: none;
+  white-space: nowrap;
+  overflow: visible;
+}
 .badge-dangling {
   display: inline-block;
   font-size: 0.72rem;
@@ -860,7 +879,7 @@ td.col-actions {
 .action-group {
   display: inline-flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: flex-start; /* pack left — empty space stays on the right of buttons, not as a hole before ops */
   gap: 0.22rem;
   position: relative;
   flex-wrap: nowrap;
@@ -945,11 +964,13 @@ table.networks-table td.col-actions,
 table.volumes-table th.col-actions,
 table.volumes-table td.col-actions { width: 22%; max-width: none !important; }
 
-/* Detect result: compact pill only, no tall multi-line blank */
+/* Detect result: compact pill only — do not stretch into a void */
 table.updates-table td.col-detect,
 table.updates-table th.col-detect {
-  width: 16%;
-  max-width: 0;
+  width: 9%;
+  max-width: none;
+  white-space: nowrap;
+  overflow: visible;
 }
 .detect-cell {
   display: flex;

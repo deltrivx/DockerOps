@@ -193,11 +193,19 @@ def images_prune(actor: str | None = None, dangling: bool = True) -> dict[str, A
     try:
         result = prune_images(dangling=dangling)
         rec = _record("image_prune", "images", "ok", result, actor)
+        deleted = result.get("images_deleted") or []
+        n = len(deleted) if isinstance(deleted, list) else 0
+        space = int(result.get("space_reclaimed") or 0)
+        mode = "dangling" if dangling else "未使用"
+        if n == 0 and space == 0:
+            msg = f"没有可清理的{mode}镜像"
+        else:
+            msg = f"清理{mode}镜像完成 · 删除 {n} 项 · 回收 {space} 字节"
         return {
             "ok": True,
             "result": result,
             "record": rec,
-            "message": f"镜像清理完成，回收 {result.get('space_reclaimed') or 0} 字节",
+            "message": msg,
         }
     except PermissionError:
         raise

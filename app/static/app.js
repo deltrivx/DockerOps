@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.5.2",
+  version: "0.5.3",
   tab: "overview",
   /** Live log stream controller */
   logs: {
@@ -340,13 +340,13 @@ function isNarrowScreen() {
   }
 }
 
-function actionMaxPrimary(defaultN = 3) {
+function actionMaxPrimary(defaultN = 4) {
   return isNarrowScreen() ? 1 : defaultN;
 }
 
 /**
- * Compact actions: desktop up to 3 primary buttons + "更多" dropdown.
- * Wider action column leaves room for stop/log/update; narrow screens stay at 1.
+ * Compact actions: desktop up to 4 primary buttons + "更多" dropdown.
+ * Pack left so ops sit next to content (no empty hole before buttons).
  * @param {HTMLElement} host
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean, primary?:boolean}[]} primary
  * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean}[]} [more]
@@ -355,7 +355,7 @@ function actionMaxPrimary(defaultN = 3) {
 function fillActionGroup(host, primary, more = [], opts = {}) {
   host.classList.add("actions", "col-actions");
   host.innerHTML = "";
-  const maxPrimary = opts.maxPrimary ?? actionMaxPrimary(3);
+  const maxPrimary = opts.maxPrimary ?? actionMaxPrimary(4);
   const allPrimary = (primary || []).filter(Boolean);
   const shown = allPrimary.slice(0, maxPrimary);
   const overflow = allPrimary.slice(maxPrimary);
@@ -631,25 +631,30 @@ function renderContainers() {
     const actions = tr.querySelector(".actions");
     const running = (c.status || "").toLowerCase() === "running";
     const paused = (c.status || "").toLowerCase() === "paused";
-    // Primary: lifecycle + 日志 + (更新|详情); 其余进更多 — 桌面最多 3 个
+    // Primary (desktop ≤4): 启停 · 重启 · 日志 · 更新|终端|详情
     const primary = [];
     if (!running && !paused) primary.push({ label: "启动", fn: () => doLife(id, "start") });
     else if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
     else primary.push({ label: "停止", fn: () => doLife(id, "stop") });
+    if (running) primary.push({ label: "重启", fn: () => doLife(id, "restart") });
     primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
     if (upd && upd.update_available) {
       primary.push({ label: "更新", fn: () => doUpdate(id), primary: true });
+    } else if (running && state.consoleEnabled) {
+      primary.push({ label: "终端", fn: () => openConsole(id, c.name) });
     } else {
       primary.push({ label: "详情", fn: () => showDetail(id, c.name) });
     }
     const more = [
-      running ? { label: "重启", fn: () => doLife(id, "restart") } : null,
       {
         label: "终端",
         fn: () => openConsole(id, c.name),
         disabled: !state.consoleEnabled || !running,
       },
-      !(upd && upd.update_available) ? null : { label: "详情", fn: () => showDetail(id, c.name) },
+      // avoid duplicate if already primary
+      !(upd && upd.update_available) && !(running && state.consoleEnabled)
+        ? null
+        : { label: "详情", fn: () => showDetail(id, c.name) },
       running ? { label: "暂停", fn: () => doLife(id, "pause") } : null,
       running ? { label: "强制停止", fn: () => doLife(id, "kill"), danger: true } : null,
       { label: "重命名", fn: () => doRename(id, c.name) },
@@ -661,7 +666,14 @@ function renderContainers() {
         : null,
       { label: "删除", fn: () => doRemove(id), danger: true, disabled: !state.takeover },
     ];
-    fillActionGroup(actions, primary, more);
+    // Deduplicate 终端 if already in primary
+    const moreFiltered = more.filter((a) => {
+      if (!a) return false;
+      if (a.label === "终端" && primary.some((p) => p.label === "终端")) return false;
+      if (a.label === "详情" && primary.some((p) => p.label === "详情")) return false;
+      return true;
+    });
+    fillActionGroup(actions, primary, moreFiltered);
     tbody.appendChild(tr);
   });
   if (!items.length) {
@@ -703,11 +715,12 @@ function renderCompose() {
       [
         { label: "更新", fn: () => doComposeUpdate(p.name) },
         { label: "Up", fn: () => doComposeUp(p.name), disabled: !state.takeover },
+        { label: "备份", fn: () => doComposeBackup(p.name) },
       ],
       [
-        { label: "备份", fn: () => doComposeBackup(p.name) },
         { label: "Down", fn: () => doComposeDown(p.name), danger: true, disabled: !state.takeover },
-      ]
+      ],
+      { maxPrimary: actionMaxPrimary(3) }
     );
     cbody.appendChild(tr);
   });
@@ -739,9 +752,12 @@ function renderUnraid() {
     const n = t.name || "";
     fillActionGroup(
       tr.querySelector(".actions"),
-      [{ label: "模板更新", fn: () => doUnraidUpdate(n) }],
-      [{ label: "备份", fn: () => doUnraidBackup(n) }],
-      { maxPrimary: 1 }
+      [
+        { label: "模板更新", fn: () => doUnraidUpdate(n) },
+        { label: "备份", fn: () => doUnraidBackup(n) },
+      ],
+      [],
+      { maxPrimary: actionMaxPrimary(2) }
     );
     ubody.appendChild(tr);
   });
@@ -786,9 +802,10 @@ function renderUpdates() {
         [
           { label: u.update_available ? "更新" : "安全更新", fn: () => doUpdate(u.id), primary: !!u.update_available },
           { label: "日志", fn: () => showLogs(u.id, u.name) },
+          { label: "详情", fn: () => showDetail(u.id, u.name) },
         ],
-        [{ label: "详情", fn: () => showDetail(u.id, u.name) }],
-        { maxPrimary: actionMaxPrimary(2) }
+        [],
+        { maxPrimary: actionMaxPrimary(3) }
       );
     }
     body.appendChild(tr);
@@ -2689,32 +2706,22 @@ $("#btn-image-pull").addEventListener("click", async () => {
   }
 });
 
-$("#btn-image-prune").addEventListener("click", async () => {
-  if (!requireLogin() || !requireTakeover("清理镜像")) return;
-  if (!confirm("清理 dangling 镜像？")) return;
-  try {
-    const r = await api("/api/images/prune?dangling=true", { method: "POST" });
-    alert(r.message || "完成");
-    loadResources("images");
-  } catch (e) {
-    alert(e.message);
-  }
-});
-
 $("#btn-image-prune-unused")?.addEventListener("click", async () => {
   if (!requireLogin() || !requireTakeover("清理未使用镜像")) return;
   if (
     !confirm(
-      "清理所有未使用的镜像（含带 tag、未被任何容器引用）？\n此操作不可恢复，请确认无误。"
+      "清理所有未使用的镜像（含 dangling 与带 tag、未被任何容器引用的镜像）？\n此操作不可恢复，请确认无误。"
     )
   )
     return;
   try {
+    // dangling=false → docker image prune -a (all unused, including tagged)
     const r = await api("/api/images/prune?dangling=false", { method: "POST" });
+    if (!r.ok) throw new Error(r.message || "清理失败");
     const deleted = r.result?.images_deleted || r.images_deleted || [];
-    const n = Array.isArray(deleted) ? deleted.length : "";
-    const space = r.result?.space_reclaimed ?? r.space_reclaimed;
-    alert(r.message || `完成${n !== "" ? ` · 删除 ${n} 项` : ""}${space != null ? ` · 回收 ${fmtBytes(space)}` : ""}`);
+    const n = Array.isArray(deleted) ? deleted.length : 0;
+    const space = r.result?.space_reclaimed ?? r.space_reclaimed ?? 0;
+    alert(r.message || `完成 · 删除 ${n} 项 · 回收 ${fmtBytes(space)}`);
     loadResources("images");
   } catch (e) {
     alert(e.message);
