@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.5.6",
+  version: "0.5.7",
   tab: "overview",
   /** Live log stream controller */
   logs: {

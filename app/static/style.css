@@ -1689,29 +1689,62 @@ body.auth-locked .shell {
     width: 0 !important;
   }
 
-  /* Visible mobile cols reclaim full table width (check + name + status + ops) */
-  table.containers-table col:nth-child(1) { width: 10% !important; }
-  table.containers-table col:nth-child(2) { width: 34% !important; }
-  table.containers-table col:nth-child(5) { width: 20% !important; }
-  table.containers-table col:nth-child(8) { width: 36% !important; }
+  /*
+   * Mobile tables: keep readable column floors; if viewport is narrower,
+   * .table-wrap (overflow-x:auto) enables horizontal swipe — do NOT crush.
+   */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  table.containers-table col:nth-child(1) { width: 2.5rem !important; }
+  table.containers-table col:nth-child(2) { width: 7.5rem !important; }
+  table.containers-table col:nth-child(5) { width: 5.5rem !important; }
+  table.containers-table col:nth-child(8) { width: 8.5rem !important; }
+  table.containers-table th.col-check,
+  table.containers-table td.col-check { width: 2.5rem !important; min-width: 2.5rem; }
+  table.containers-table th.cell-text:nth-child(2),
+  table.containers-table td.cell-text:nth-child(2) { width: 7.5rem !important; min-width: 7rem; }
+  table.containers-table th.col-status,
+  table.containers-table td.col-status { width: 5.5rem !important; min-width: 5rem; }
   table.containers-table th.col-actions,
-  table.containers-table td.col-actions { width: 36% !important; }
+  table.containers-table td.col-actions {
+    width: 8.5rem !important;
+    min-width: 8rem;
+  }
+
+  table.images-table th.col-check,
+  table.images-table td.col-check { min-width: 2.5rem; }
+  table.images-table th.cell-text:nth-child(2),
+  table.images-table td.cell-text:nth-child(2) { min-width: 9rem; }
+  table.images-table th.col-size,
+  table.images-table td.col-size { min-width: 4.5rem; }
+  table.images-table th.col-actions,
+  table.images-table td.col-actions { min-width: 7.5rem; }
+
+  table.updates-table th.col-check,
+  table.updates-table td.col-check { min-width: 2.5rem; }
+  table.updates-table th.cell-text:nth-child(2),
+  table.updates-table td.cell-text:nth-child(2) { min-width: 7rem; }
+  table.updates-table th.col-actions,
+  table.updates-table td.col-actions { min-width: 8rem; }
 
   table.containers-table,
   table.images-table,
   table.updates-table {
-    min-width: 0;
-    width: 100%;
+    min-width: 480px;
+    width: max(100%, 480px);
   }
   table.compose-table,
   table.unraid-table,
   table.networks-table,
   table.volumes-table {
-    min-width: 0;
-    width: 100%;
+    min-width: 360px;
+    width: max(100%, 360px);
   }
 
-  /* sticky check + name while any residual horizontal scroll */
+  /* sticky check + name while swiping horizontally */
   table.containers-table th.col-check,
   table.containers-table td.col-check,
   table.images-table th.col-check,
@@ -1726,14 +1759,18 @@ body.auth-locked .shell {
   table.images-table th.cell-text:nth-child(2),
   table.images-table td.cell-text:nth-child(2) {
     position: sticky;
-    left: 2.1rem; /* sit after checkbox col, not stacked on left:0 */
+    left: 2.5rem; /* after checkbox col */
     z-index: 2;
     background: rgba(14, 18, 28, 0.96);
     box-shadow: 4px 0 8px rgba(0, 0, 0, 0.25);
   }
-  /* no forced horizontal scroll hint when table fits viewport */
   .table-wrap::after {
-    display: none;
+    content: "左右滑动查看更多";
+    display: block;
+    font-size: 0.72rem;
+    color: var(--muted);
+    padding: 0.3rem 0.15rem 0;
+    letter-spacing: 0.02em;
   }
 }
 
@@ -1747,18 +1784,40 @@ body.auth-locked .shell {
     align-items: center;
     justify-content: center;
   }
-  /* Narrow phone: give ops more room so 停止+更多 sit on one horizontal line */
-  table.containers-table col:nth-child(1) { width: 9% !important; }
-  table.containers-table col:nth-child(2) { width: 30% !important; }
-  table.containers-table col:nth-child(5) { width: 18% !important; }
-  table.containers-table col:nth-child(8) { width: 43% !important; }
-  table.containers-table th.col-actions,
-  table.containers-table td.col-actions { width: 43% !important; }
+  /* Narrow phone: slightly tighter floors; still scroll, never crush ops */
+  table.containers-table,
+  table.images-table,
+  table.updates-table {
+    min-width: 420px;
+    width: max(100%, 420px);
+  }
+  table.containers-table col:nth-child(1) { width: 2.25rem !important; }
+  table.containers-table col:nth-child(2) { width: 6.5rem !important; }
+  table.containers-table col:nth-child(5) { width: 5rem !important; }
+  table.containers-table col:nth-child(8) { width: 8rem !important; }
+  table.containers-table th.col-check,
+  table.containers-table td.col-check { width: 2.25rem !important; min-width: 2.25rem; }
+  table.containers-table th.cell-text:nth-child(2),
+  table.containers-table td.cell-text:nth-child(2) {
+    width: 6.5rem !important;
+    min-width: 6rem;
+  }
   table.containers-table th.col-status,
   table.containers-table td.col-status {
+    width: 5rem !important;
+    min-width: 4.75rem;
     max-width: none;
     padding-left: 0.2rem;
     padding-right: 0.2rem;
+  }
+  table.containers-table th.col-actions,
+  table.containers-table td.col-actions {
+    width: 8rem !important;
+    min-width: 7.75rem;
+  }
+  table.containers-table th.cell-text:nth-child(2),
+  table.containers-table td.cell-text:nth-child(2) {
+    left: 2.25rem;
   }
   .batch-actions {
     grid-template-columns: repeat(2, minmax(0, 1fr));

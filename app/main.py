@@ -98,15 +98,23 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.5.6"
+VERSION = "0.5.7"
 CHANGELOG = [
+    {
+        "version": "0.5.7",
+        "date": "2026-07-27",
+        "items": [
+            "移动端表格不再硬挤：列设可读最小宽度，超出时 table-wrap 横向滑动",
+            "保留勾选/名称 sticky；底部提示「左右滑动查看更多」",
+        ],
+    },
     {
         "version": "0.5.6",
         "date": "2026-07-27",
         "items": [
             "移动端内容区对齐：批量栏 meta/按钮分区 + 2 列等宽网格，按钮文字水平居中",
             "藏列时同步隐藏 colgroup 槽位并重配可见列宽，操作列可横排「停止+更多」",
-            "工具栏筛选两列网格；表格适配视口宽度，去掉强制横滑",
+            "工具栏筛选两列网格",
         ],
     },
     {
