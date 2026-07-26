@@ -781,6 +781,17 @@ tr:hover td { background: rgba(108, 92, 231, 0.05); }
   border-radius: 10px;
   background: rgba(0, 0, 0, 0.22);
 }
+.batch-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex: 0 0 auto;
+  margin-right: 0.15rem;
+}
+/* Desktop: children join parent flex so layout stays one row */
+.batch-actions {
+  display: contents;
+}
 
 .input, .select {
   border: 1px solid var(--border);
@@ -810,6 +821,10 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   border: 1px solid var(--border);
   background: rgba(15, 18, 28, 0.9);
   color: var(--text);
@@ -818,6 +833,7 @@ input[type="range"] { width: 140px; accent-color: var(--purple); }
   cursor: pointer;
   font: inherit;
   font-weight: 600;
+  line-height: 1.2;
   transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
 }
 .btn:hover {
@@ -1513,21 +1529,56 @@ body.auth-locked .shell {
   .mgr-cards { grid-template-columns: 1fr; }
   .activity-grid { grid-template-columns: 1fr; }
   input[type="search"].input { min-width: 0; width: 100%; }
-  .toolbar { width: 100%; }
-  .toolbar .input, .toolbar .select { flex: 1 1 auto; min-width: 0; }
-  /* Batch bar: wrap evenly, equal-ish buttons */
-  .batch-bar {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
+  .toolbar {
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr;
     gap: 0.4rem;
   }
-  .batch-bar .btn {
-    flex: 1 1 calc(33.33% - 0.4rem);
-    min-width: 5.5rem;
-    justify-content: center;
+  .toolbar .input,
+  .toolbar .select {
+    width: 100%;
+    min-width: 0;
   }
-  /* Row actions: pack left, consistent height */
+  /* status + manager filters share one row when both present */
+  .toolbar .select {
+    min-width: 0;
+  }
+  .toolbar:has(> .select:nth-of-type(1)):has(> .select:nth-of-type(2)) {
+    grid-template-columns: 1fr 1fr;
+  }
+  .toolbar:has(> .select:nth-of-type(1)):has(> .select:nth-of-type(2)) > input[type="search"] {
+    grid-column: 1 / -1;
+  }
+  /* Batch bar: meta row + equal action grid (text centered horizontally) */
+  .batch-bar {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.5rem;
+  }
+  .batch-meta {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    width: 100%;
+    margin-right: 0;
+  }
+  .batch-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.4rem;
+    width: 100%;
+  }
+  .batch-actions .btn {
+    width: 100%;
+    min-width: 0;
+    min-height: 36px;
+    justify-content: center;
+    text-align: center;
+    white-space: nowrap;
+  }
+  /* Row actions: pack left, consistent height + centered label */
   td.col-actions,
   td.actions {
     text-align: left !important;
@@ -1537,13 +1588,20 @@ body.auth-locked .shell {
   }
   .action-group {
     justify-content: flex-start !important;
+    align-items: center;
     flex-wrap: nowrap;
     gap: 0.2rem;
     width: 100%;
   }
-  .action-group .btn.small {
+  .action-group .btn.small,
+  .action-menu > summary.btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
     min-height: 34px;
     padding: 0.2rem 0.45rem;
+    white-space: nowrap;
   }
   /* no particle steal on mobile */
   #particles, .spotlight, .bg-orbs {
@@ -1554,7 +1612,11 @@ body.auth-locked .shell {
    * Mobile table density: hide secondary columns so name/status/actions stay usable.
    * Desktop layout untouched (rules only inside this media query).
    */
+  /* Hide secondary columns AND their colgroup slots so remaining cols reclaim width */
   table.containers-table col:nth-child(3),
+  table.containers-table col:nth-child(4),
+  table.containers-table col:nth-child(6),
+  table.containers-table col:nth-child(7),
   table.containers-table th.col-mgr,
   table.containers-table td.col-mgr,
   table.containers-table th.cell-text:nth-child(4),
@@ -1564,6 +1626,7 @@ body.auth-locked .shell {
   table.containers-table th.col-num,
   table.containers-table td.col-num {
     display: none !important;
+    width: 0 !important;
   }
   table.images-table col:nth-child(3),
   table.images-table col:nth-child(5),
@@ -1575,6 +1638,7 @@ body.auth-locked .shell {
   table.images-table th.col-used,
   table.images-table td.col-used {
     display: none !important;
+    width: 0 !important;
   }
   table.updates-table col:nth-child(3),
   table.updates-table col:nth-child(4),
@@ -1586,6 +1650,7 @@ body.auth-locked .shell {
   table.updates-table th.col-status,
   table.updates-table td.col-status {
     display: none !important;
+    width: 0 !important;
   }
   table.compose-table col:nth-child(2),
   table.compose-table col:nth-child(4),
@@ -1594,11 +1659,13 @@ body.auth-locked .shell {
   table.compose-table th.cell-text:nth-child(4),
   table.compose-table td.cell-text:nth-child(4) {
     display: none !important;
+    width: 0 !important;
   }
   table.unraid-table col:nth-child(2),
   table.unraid-table th.cell-text:nth-child(2),
   table.unraid-table td.cell-text:nth-child(2) {
     display: none !important;
+    width: 0 !important;
   }
   table.networks-table col:nth-child(2),
   table.networks-table col:nth-child(3),
@@ -1610,6 +1677,7 @@ body.auth-locked .shell {
   table.networks-table th.col-num,
   table.networks-table td.col-num {
     display: none !important;
+    width: 0 !important;
   }
   table.volumes-table col:nth-child(2),
   table.volumes-table col:nth-child(3),
@@ -1618,31 +1686,32 @@ body.auth-locked .shell {
   table.volumes-table th.cell-text:nth-child(3),
   table.volumes-table td.cell-text:nth-child(3) {
     display: none !important;
+    width: 0 !important;
   }
+
+  /* Visible mobile cols reclaim full table width (check + name + status + ops) */
+  table.containers-table col:nth-child(1) { width: 10% !important; }
+  table.containers-table col:nth-child(2) { width: 34% !important; }
+  table.containers-table col:nth-child(5) { width: 20% !important; }
+  table.containers-table col:nth-child(8) { width: 36% !important; }
+  table.containers-table th.col-actions,
+  table.containers-table td.col-actions { width: 36% !important; }
 
   table.containers-table,
   table.images-table,
   table.updates-table {
-    min-width: 460px;
+    min-width: 0;
+    width: 100%;
   }
   table.compose-table,
   table.unraid-table,
   table.networks-table,
   table.volumes-table {
-    min-width: 360px;
+    min-width: 0;
+    width: 100%;
   }
 
-  /* sticky name column while horizontal scrolling */
-  table.containers-table th.cell-text:nth-child(2),
-  table.containers-table td.cell-text:nth-child(2),
-  table.images-table th.cell-text:nth-child(2),
-  table.images-table td.cell-text:nth-child(2) {
-    position: sticky;
-    left: 0;
-    z-index: 2;
-    background: rgba(14, 18, 28, 0.96);
-    box-shadow: 4px 0 8px rgba(0, 0, 0, 0.25);
-  }
+  /* sticky check + name while any residual horizontal scroll */
   table.containers-table th.col-check,
   table.containers-table td.col-check,
   table.images-table th.col-check,
@@ -1652,34 +1721,47 @@ body.auth-locked .shell {
     z-index: 3;
     background: rgba(14, 18, 28, 0.96);
   }
+  table.containers-table th.cell-text:nth-child(2),
+  table.containers-table td.cell-text:nth-child(2),
+  table.images-table th.cell-text:nth-child(2),
+  table.images-table td.cell-text:nth-child(2) {
+    position: sticky;
+    left: 2.1rem; /* sit after checkbox col, not stacked on left:0 */
+    z-index: 2;
+    background: rgba(14, 18, 28, 0.96);
+    box-shadow: 4px 0 8px rgba(0, 0, 0, 0.25);
+  }
+  /* no forced horizontal scroll hint when table fits viewport */
   .table-wrap::after {
-    content: "左右滑动查看更多";
-    display: block;
-    font-size: 0.72rem;
-    color: var(--muted);
-    padding: 0.25rem 0.15rem 0;
+    display: none;
   }
 }
 
 @media (max-width: 520px) {
   .score { font-size: 2.8rem; }
   .stat-grid { grid-template-columns: repeat(2, 1fr); }
-  .btn.small { font-size: 0.72rem; min-height: 34px; }
-  table.containers-table,
-  table.images-table,
-  table.updates-table {
-    min-width: 320px;
+  .btn.small {
+    font-size: 0.72rem;
+    min-height: 34px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
-  /* Mobile containers: check + name + status + ops — rebalance so ops aren't crushed */
-  table.containers-table col:nth-child(1) { width: 8% !important; }
-  table.containers-table col:nth-child(2) { width: 34% !important; }
+  /* Narrow phone: give ops more room so 停止+更多 sit on one horizontal line */
+  table.containers-table col:nth-child(1) { width: 9% !important; }
+  table.containers-table col:nth-child(2) { width: 30% !important; }
   table.containers-table col:nth-child(5) { width: 18% !important; }
-  table.containers-table col:nth-child(8) { width: 40% !important; }
+  table.containers-table col:nth-child(8) { width: 43% !important; }
   table.containers-table th.col-actions,
-  table.containers-table td.col-actions { width: 40% !important; }
-  .batch-bar .btn {
-    flex: 1 1 calc(50% - 0.4rem);
-    min-width: 0;
+  table.containers-table td.col-actions { width: 43% !important; }
+  table.containers-table th.col-status,
+  table.containers-table td.col-status {
+    max-width: none;
+    padding-left: 0.2rem;
+    padding-right: 0.2rem;
+  }
+  .batch-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
   .header-actions #auth-state {
     flex: 1 1 100%;

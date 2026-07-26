@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.5.5') }}" />
-  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.5.5') }}" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.5.6') }}" />
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.5.6') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -58,7 +58,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.5.5 · —
+        v0.5.6 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -235,13 +235,17 @@
             </div>
           </div>
           <div class="batch-bar" id="batch-bar">
-            <label class="chk"><input type="checkbox" id="ctr-check-all" /> 全选当前</label>
-            <span class="muted small" id="batch-sel-count">已选 0</span>
-            <button type="button" class="btn small" data-batch="start">批量启动</button>
-            <button type="button" class="btn small" data-batch="stop">批量停止</button>
-            <button type="button" class="btn small" data-batch="restart">批量重启</button>
-            <button type="button" class="btn small" data-batch="pause">批量暂停</button>
-            <button type="button" class="btn small danger" data-batch="remove">批量删除</button>
+            <div class="batch-meta">
+              <label class="chk"><input type="checkbox" id="ctr-check-all" /> 全选当前</label>
+              <span class="muted small" id="batch-sel-count">已选 0</span>
+            </div>
+            <div class="batch-actions">
+              <button type="button" class="btn small" data-batch="start">批量启动</button>
+              <button type="button" class="btn small" data-batch="stop">批量停止</button>
+              <button type="button" class="btn small" data-batch="restart">批量重启</button>
+              <button type="button" class="btn small" data-batch="pause">批量暂停</button>
+              <button type="button" class="btn small danger" data-batch="remove">批量删除</button>
+            </div>
           </div>
           <div class="table-wrap">
             <table class="containers-table data-table">
@@ -653,7 +657,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.5.5</span> ·
+        DockerOps <span id="foot-version">v0.5.6</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -772,9 +776,9 @@
     <div id="image-detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.5.5') }}"></script>
-  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.5.5') }}"></script>
-  <script src="/static/particles.js?v={{ asset_v|default('0.5.5') }}"></script>
-  <script src="/static/app.js?v={{ asset_v|default('0.5.5') }}"></script>
+  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.5.6') }}"></script>
+  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.5.6') }}"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.5.6') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.5.6') }}"></script>
 </body>
 </html>
