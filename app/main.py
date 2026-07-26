@@ -83,8 +83,18 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.4.5"
+VERSION = "0.4.6"
 CHANGELOG = [
+    {
+        "version": "0.4.6",
+        "date": "2026-07-26",
+        "items": [
+            "修复操作列按钮过多导致表格从操作处割裂：主操作 +「更多」下拉",
+            "镜像列表重排：仓库/标签分行、固定列宽、按占用排序，避免混乱",
+            "表格仅裁剪文本列，操作列始终可见",
+        ],
+    },
+
     {
         "version": "0.4.5",
         "date": "2026-07-26",

@@ -3,7 +3,7 @@ const state = {
   username: localStorage.getItem("dockerops_user") || "",
   takeover: false,
   platform: "generic",
-  version: "0.4.5",
+  version: "0.4.6",
   tab: "overview",
   needsSetup: false,
   usernames: [],
@@ -306,8 +306,65 @@ function actionBtn(text, fn, { danger = false, disabled = false, primary = false
   b.className = `btn small${danger ? " danger" : ""}${primary ? " primary" : ""}`;
   b.textContent = text;
   b.disabled = disabled;
-  b.addEventListener("click", fn);
+  b.addEventListener("click", (e) => {
+    e.stopPropagation();
+    fn(e);
+  });
   return b;
+}
+
+/**
+ * Compact actions: a few primary buttons + "更多" dropdown.
+ * Prevents the 操作 column from wrapping and splitting the table layout.
+ * @param {HTMLElement} host
+ * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean, primary?:boolean}[]} primary
+ * @param {{label:string, fn:Function, danger?:boolean, disabled?:boolean}[]} [more]
+ */
+function fillActionGroup(host, primary, more = []) {
+  host.classList.add("actions");
+  host.innerHTML = "";
+  const group = document.createElement("div");
+  group.className = "action-group";
+  primary.forEach((a) => {
+    if (!a) return;
+    group.appendChild(
+      actionBtn(a.label, a.fn, {
+        danger: !!a.danger,
+        disabled: !!a.disabled,
+        primary: !!a.primary,
+      })
+    );
+  });
+  const extra = (more || []).filter(Boolean);
+  if (extra.length) {
+    const det = document.createElement("details");
+    det.className = "action-menu";
+    const sum = document.createElement("summary");
+    sum.className = "btn small";
+    sum.textContent = "更多";
+    sum.title = "更多操作";
+    det.appendChild(sum);
+    const panel = document.createElement("div");
+    panel.className = "action-menu-panel";
+    extra.forEach((a) => {
+      panel.appendChild(
+        actionBtn(a.label, (e) => {
+          det.open = false;
+          a.fn(e);
+        }, { danger: !!a.danger, disabled: !!a.disabled })
+      );
+    });
+    det.appendChild(panel);
+    // close other menus when opening
+    det.addEventListener("toggle", () => {
+      if (!det.open) return;
+      document.querySelectorAll("details.action-menu[open]").forEach((d) => {
+        if (d !== det) d.open = false;
+      });
+    });
+    group.appendChild(det);
+  }
+  host.appendChild(group);
 }
 
 function setSidebarOpen(open) {
@@ -526,40 +583,44 @@ function renderContainers() {
     const updBadge = upd && upd.update_available
       ? `<span class="pill update-yes" title="${escapeHtml(upd.message || "有更新")}">有更新</span>`
       : "";
+    const shortId = String(c.id || "").replace(/^sha256:/, "").slice(0, 12);
     tr.innerHTML = `
-      <td><input type="checkbox" class="ctr-sel" data-id="${escapeHtml(id)}" ${checked} /></td>
-      <td><strong>${escapeHtml(c.name || c.id)}</strong> ${updBadge}<div class="muted mono cell-clip" title="${escapeHtml(c.id || "")}">${escapeHtml(c.id || "")}</div></td>
-      <td>${managerPill(c.manager, c.label)}${mgrExtra}</td>
-      <td class="mono"><span class="cell-clip" title="${escapeHtml(c.image || "")}">${escapeHtml(c.image || "")}</span></td>
-      <td><span class="${pillClass(c.status)}">${escapeHtml(c.status || "-")}</span></td>
-      <td><span class="${pillClass(c.health || "none")}">${escapeHtml(c.health || "-")}</span></td>
-      <td>${c.restart_count ?? 0}</td>
-      <td class="actions"></td>
+      <td class="col-check"><input type="checkbox" class="ctr-sel" data-id="${escapeHtml(id)}" ${checked} /></td>
+      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(c.name || c.id || "")}">${escapeHtml(c.name || c.id)}</strong> ${updBadge}<div class="muted mono cell-clip" title="${escapeHtml(c.id || "")}">${escapeHtml(shortId)}</div></td>
+      <td class="col-mgr">${managerPill(c.manager, c.label)}${mgrExtra}</td>
+      <td class="cell-text mono"><span class="cell-clip" title="${escapeHtml(c.image || "")}">${escapeHtml(c.image || "")}</span></td>
+      <td class="col-status"><span class="${pillClass(c.status)}">${escapeHtml(c.status || "-")}</span></td>
+      <td class="col-health"><span class="${pillClass(c.health || "none")}">${escapeHtml(c.health || "-")}</span></td>
+      <td class="col-num">${c.restart_count ?? 0}</td>
+      <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
     const running = (c.status || "").toLowerCase() === "running";
     const paused = (c.status || "").toLowerCase() === "paused";
-    if (!running && !paused) actions.appendChild(actionBtn("启动", () => doLife(id, "start")));
+    const primary = [];
+    if (!running && !paused) primary.push({ label: "启动", fn: () => doLife(id, "start") });
     if (running) {
-      actions.appendChild(actionBtn("停止", () => doLife(id, "stop")));
-      actions.appendChild(actionBtn("重启", () => doLife(id, "restart")));
-      actions.appendChild(actionBtn("暂停", () => doLife(id, "pause")));
+      primary.push({ label: "停止", fn: () => doLife(id, "stop") });
+      primary.push({ label: "重启", fn: () => doLife(id, "restart") });
     }
-    if (paused) actions.appendChild(actionBtn("恢复", () => doLife(id, "unpause")));
-    actions.appendChild(actionBtn("详情", () => showDetail(id, c.name)));
-    actions.appendChild(actionBtn("日志", () => showLogs(id, c.name)));
-    actions.appendChild(actionBtn("重命名", () => doRename(id, c.name)));
-    actions.appendChild(actionBtn("备份", () => doBackup(id)));
-    actions.appendChild(
-      actionBtn(upd && upd.update_available ? "应用更新" : "更新", () => doUpdate(id), {
-        primary: !!(upd && upd.update_available),
-      })
-    );
-    actions.appendChild(actionBtn("回滚", () => doRollback(id)));
-    if (c.manager === "third_party") {
-      actions.appendChild(actionBtn("Adopt", () => doAdopt(id), { disabled: !state.takeover }));
+    if (paused) primary.push({ label: "恢复", fn: () => doLife(id, "unpause") });
+    primary.push({ label: "日志", fn: () => showLogs(id, c.name) });
+    if (upd && upd.update_available) {
+      primary.push({ label: "更新", fn: () => doUpdate(id), primary: true });
     }
-    actions.appendChild(actionBtn("删除", () => doRemove(id), { danger: true, disabled: !state.takeover }));
+    const more = [
+      { label: "详情", fn: () => showDetail(id, c.name) },
+      running ? { label: "暂停", fn: () => doLife(id, "pause") } : null,
+      { label: "重命名", fn: () => doRename(id, c.name) },
+      { label: "备份", fn: () => doBackup(id) },
+      !(upd && upd.update_available) ? { label: "安全更新", fn: () => doUpdate(id) } : null,
+      { label: "回滚指引", fn: () => doRollback(id) },
+      c.manager === "third_party"
+        ? { label: "Adopt", fn: () => doAdopt(id), disabled: !state.takeover }
+        : null,
+      { label: "删除", fn: () => doRemove(id), danger: true, disabled: !state.takeover },
+    ];
+    fillActionGroup(actions, primary, more);
     tbody.appendChild(tr);
   });
   if (!items.length) {
@@ -590,17 +651,23 @@ function renderCompose() {
   items.forEach((p) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><strong>${escapeHtml(p.name)}</strong><div class="muted">${escapeHtml(p.source || "")}</div></td>
-      <td>${escapeHtml((p.services || []).join(", ") || "-")}</td>
-      <td>${p.running ?? 0}/${p.total ?? 0}</td>
-      <td class="mono small">${escapeHtml(p.working_dir || "-")}<div class="muted">${escapeHtml((p.config_files || []).join(", "))}</div></td>
-      <td class="actions"></td>
+      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(p.name || "")}">${escapeHtml(p.name)}</strong><div class="muted cell-clip">${escapeHtml(p.source || "")}</div></td>
+      <td class="cell-text"><span class="cell-clip" title="${escapeHtml((p.services || []).join(", "))}">${escapeHtml((p.services || []).join(", ") || "-")}</span></td>
+      <td class="col-num">${p.running ?? 0}/${p.total ?? 0}</td>
+      <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(p.working_dir || "")}">${escapeHtml(p.working_dir || "-")}</span></td>
+      <td class="col-actions actions"></td>
     `;
-    const actions = tr.querySelector(".actions");
-    actions.appendChild(actionBtn("备份", () => doComposeBackup(p.name)));
-    actions.appendChild(actionBtn("更新", () => doComposeUpdate(p.name)));
-    actions.appendChild(actionBtn("Up", () => doComposeUp(p.name), { disabled: !state.takeover }));
-    actions.appendChild(actionBtn("Down", () => doComposeDown(p.name), { danger: true, disabled: !state.takeover }));
+    fillActionGroup(
+      tr.querySelector(".actions"),
+      [
+        { label: "更新", fn: () => doComposeUpdate(p.name) },
+        { label: "Up", fn: () => doComposeUp(p.name), disabled: !state.takeover },
+      ],
+      [
+        { label: "备份", fn: () => doComposeBackup(p.name) },
+        { label: "Down", fn: () => doComposeDown(p.name), danger: true, disabled: !state.takeover },
+      ]
+    );
     cbody.appendChild(tr);
   });
   if (!items.length) {
@@ -622,16 +689,18 @@ function renderUnraid() {
     const tr = document.createElement("tr");
     const st = (t.container && t.container.status) || "-";
     tr.innerHTML = `
-      <td><strong>${escapeHtml(t.name || t.file || "")}</strong><div class="muted mono">${escapeHtml(t.file || "")}</div></td>
-      <td class="mono small">${escapeHtml(t.repository || "-")}</td>
-      <td>${escapeHtml(t.network || "-")}${t.privileged ? ' <span class="pill">privileged</span>' : ""}</td>
-      <td><span class="${pillClass(st)}">${escapeHtml(st)}</span></td>
-      <td class="actions"></td>
+      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(t.name || t.file || "")}">${escapeHtml(t.name || t.file || "")}</strong><div class="muted mono cell-clip">${escapeHtml(t.file || "")}</div></td>
+      <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(t.repository || "")}">${escapeHtml(t.repository || "-")}</span></td>
+      <td class="col-status">${escapeHtml(t.network || "-")}${t.privileged ? ' <span class="pill">privileged</span>' : ""}</td>
+      <td class="col-status"><span class="${pillClass(st)}">${escapeHtml(st)}</span></td>
+      <td class="col-actions actions"></td>
     `;
-    const actions = tr.querySelector(".actions");
     const n = t.name || "";
-    actions.appendChild(actionBtn("备份", () => doUnraidBackup(n)));
-    actions.appendChild(actionBtn("模板更新", () => doUnraidUpdate(n)));
+    fillActionGroup(
+      tr.querySelector(".actions"),
+      [{ label: "模板更新", fn: () => doUnraidUpdate(n) }],
+      [{ label: "备份", fn: () => doUnraidBackup(n) }]
+    );
     ubody.appendChild(tr);
   });
   if (!items.length) {
@@ -661,20 +730,22 @@ function renderUpdates() {
     }
     const canSel = !!u.update_available;
     tr.innerHTML = `
-      <td><input type="checkbox" class="upd-sel" data-id="${escapeHtml(u.id || "")}" ${canSel ? "" : "disabled"} ${canSel ? "checked" : ""} /></td>
-      <td><strong>${escapeHtml(u.name || "")}</strong><div class="muted mono cell-clip">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
-      <td>${managerPill(u.manager)}</td>
-      <td class="mono small"><span class="cell-clip" title="${escapeHtml(u.image || "")}">${escapeHtml(u.image || "-")}</span></td>
-      <td><span class="${pillClass(u.status)}">${escapeHtml(u.status || "-")}</span></td>
-      <td><span class="pill ${pill}">${escapeHtml(label)}</span>
-        <div class="muted small cell-clip" title="${escapeHtml(u.message || "")}">${escapeHtml(u.message || "")}${u.remote_digest ? ` · ${escapeHtml(String(u.remote_digest).slice(0, 18))}…` : ""}</div>
+      <td class="col-check"><input type="checkbox" class="upd-sel" data-id="${escapeHtml(u.id || "")}" ${canSel ? "" : "disabled"} ${canSel ? "checked" : ""} /></td>
+      <td class="cell-text"><strong class="cell-clip">${escapeHtml(u.name || "")}</strong><div class="muted mono cell-clip">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
+      <td class="col-mgr">${managerPill(u.manager)}</td>
+      <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(u.image || "")}">${escapeHtml(u.image || "-")}</span></td>
+      <td class="col-status"><span class="${pillClass(u.status)}">${escapeHtml(u.status || "-")}</span></td>
+      <td class="cell-text"><span class="pill ${pill}">${escapeHtml(label)}</span>
+        <div class="muted small cell-clip" title="${escapeHtml(u.message || "")}">${escapeHtml(u.message || "")}</div>
       </td>
-      <td class="actions"></td>
+      <td class="col-actions actions"></td>
     `;
-    const actions = tr.querySelector(".actions");
     if (u.id) {
-      actions.appendChild(actionBtn("安全更新", () => doUpdate(u.id), { primary: !!u.update_available }));
-      actions.appendChild(actionBtn("日志", () => showLogs(u.id, u.name)));
+      fillActionGroup(
+        tr.querySelector(".actions"),
+        [{ label: u.update_available ? "更新" : "安全更新", fn: () => doUpdate(u.id), primary: !!u.update_available }],
+        [{ label: "日志", fn: () => showLogs(u.id, u.name) }]
+      );
     }
     body.appendChild(tr);
   });
@@ -1102,13 +1173,46 @@ function updateImageSelCount() {
   if (btn) btn.disabled = n === 0 || !state.takeover;
 }
 
+function splitImageRef(tag) {
+  if (!tag) return { repo: "", tag: "" };
+  const s = String(tag);
+  // split only the final :tag; keep host:port/name intact
+  const i = s.lastIndexOf(":");
+  if (i <= 0) return { repo: s, tag: "" };
+  const maybeTag = s.slice(i + 1);
+  if (!maybeTag || maybeTag.includes("/")) return { repo: s, tag: "" };
+  // pure numeric after : with no slash is likely host:port
+  if (/^\d+$/.test(maybeTag) && !s.slice(0, i).includes("/")) {
+    return { repo: s, tag: "" };
+  }
+  return { repo: s.slice(0, i), tag: maybeTag };
+}
+
+function fmtImageCreated(created) {
+  if (!created) return "—";
+  const d = new Date(created);
+  if (Number.isNaN(d.getTime())) return String(created).slice(0, 16);
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
 function renderImages() {
   const q = ($("#image-filter")?.value || "").trim();
   const vf = ($("#image-view-filter")?.value || "all").trim();
-  let items = state.images || [];
+  let items = [...(state.images || [])];
   if (vf === "dangling") items = items.filter((i) => i.dangling || !(i.tags && i.tags.length));
   if (vf === "unused") items = items.filter((i) => !i.used_by);
   if (q) items = items.filter((i) => matchFilter([i.label, ...(i.tags || []), i.id, i.full_id].join(" "), q));
+  // Portainer-like sort: used first, then by label
+  items.sort((a, b) => {
+    const ua = Number(a.used_by) || 0;
+    const ub = Number(b.used_by) || 0;
+    if (ua !== ub) return ub - ua;
+    const da = a.dangling ? 1 : 0;
+    const db = b.dangling ? 1 : 0;
+    if (da !== db) return da - db;
+    return String(a.label || "").localeCompare(String(b.label || ""));
+  });
   const countEl = $("#image-count");
   if (countEl) countEl.textContent = `显示 ${items.length} / 共 ${state.images.length} 个`;
   const body = $("#image-rows");
@@ -1121,28 +1225,40 @@ function renderImages() {
     const ref = imageRef(img);
     const selKey = img.full_id || img.id || ref;
     const checked = state.selectedImages.has(selKey) ? "checked" : "";
-    let tagHtml;
+    let nameHtml;
     if (dangling) {
-      tagHtml = `<span class="badge-dangling" title="dangling">&lt;none&gt;</span>`;
+      nameHtml = `<span class="badge-dangling" title="无标签 dangling 镜像">&lt;none&gt;:&lt;none&gt;</span>`;
     } else {
       const main = tags[0] || img.label || "";
-      const extra = tags.length > 1 ? `<div class="tag-more" title="${escapeHtml(tags.slice(1).join(", "))}">+${tags.length - 1} 个标签</div>` : "";
-      tagHtml = `<div class="tag-list mono"><div class="tag-main" title="${escapeHtml(main)}">${escapeHtml(main)}</div>${extra}</div>`;
+      const parts = splitImageRef(main);
+      const more =
+        tags.length > 1
+          ? `<div class="tag-more" title="${escapeHtml(tags.slice(1).join("\n"))}">另有 ${tags.length - 1} 个标签</div>`
+          : "";
+      nameHtml = `<div class="img-name-cell" title="${escapeHtml(tags.join("\n"))}">
+        <div class="img-repo cell-clip">${escapeHtml(parts.repo || main)}</div>
+        <div class="img-tag cell-clip">${parts.tag ? ":" + escapeHtml(parts.tag) : ""}</div>
+        ${more}
+      </div>`;
     }
     const used = Number(img.used_by) || 0;
-    const usedHtml = used > 0 ? `${used}` : `<span class="badge-unused">未使用</span>`;
+    const usedHtml = used > 0 ? `<strong>${used}</strong>` : `<span class="badge-unused">—</span>`;
+    const shortId = String(img.id || "").replace(/^sha256:/, "").slice(0, 12);
     tr.innerHTML = `
-      <td><input type="checkbox" class="img-sel" data-id="${escapeHtml(selKey)}" data-ref="${escapeHtml(ref)}" ${checked} /></td>
-      <td>${tagHtml}</td>
-      <td class="mono small"><span class="cell-clip" title="${escapeHtml(img.full_id || img.id || "")}">${escapeHtml(img.id || "")}</span></td>
-      <td>${fmtBytes(img.size)}</td>
-      <td class="muted small">${escapeHtml(fmtWhen(img.created))}</td>
-      <td>${usedHtml}</td>
-      <td class="actions"></td>
+      <td class="col-check"><input type="checkbox" class="img-sel" data-id="${escapeHtml(selKey)}" data-ref="${escapeHtml(ref)}" ${checked} /></td>
+      <td class="cell-text">${nameHtml}</td>
+      <td class="col-id mono small"><span class="cell-clip" title="${escapeHtml(img.full_id || img.id || "")}">${escapeHtml(shortId)}</span></td>
+      <td class="col-size">${fmtBytes(img.size)}</td>
+      <td class="col-date muted small">${escapeHtml(fmtImageCreated(img.created))}</td>
+      <td class="col-used">${usedHtml}</td>
+      <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
-    actions.appendChild(actionBtn("历史", () => showImageHistory(ref)));
-    actions.appendChild(actionBtn("删除", () => doImageRemove(ref), { danger: true, disabled: !state.takeover }));
+    fillActionGroup(
+      actions,
+      [{ label: "历史", fn: () => showImageHistory(ref) }],
+      [{ label: "删除", fn: () => doImageRemove(ref), danger: true, disabled: !state.takeover }]
+    );
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="7" class="muted">无镜像</td></tr>`;
@@ -1167,19 +1283,21 @@ function renderNetworks() {
   items.forEach((n) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><strong>${escapeHtml(n.name)}</strong><div class="muted mono">${escapeHtml(n.id || "")}</div></td>
-      <td>${escapeHtml(n.driver || "-")}</td>
-      <td class="mono small">${escapeHtml(n.subnet || "-")}</td>
-      <td>${n.containers ?? 0}</td>
-      <td class="actions"></td>
+      <td class="cell-text"><strong class="cell-clip">${escapeHtml(n.name)}</strong><div class="muted mono cell-clip">${escapeHtml((n.id || "").slice(0, 12))}</div></td>
+      <td class="col-status">${escapeHtml(n.driver || "-")}</td>
+      <td class="cell-text mono small"><span class="cell-clip">${escapeHtml(n.subnet || "-")}</span></td>
+      <td class="col-num">${n.containers ?? 0}</td>
+      <td class="col-actions actions"></td>
     `;
     const protectedNet = ["bridge", "host", "none"].includes(n.name);
-    tr.querySelector(".actions").appendChild(
-      actionBtn("删除", () => doNetRemove(n.id || n.name), {
+    fillActionGroup(tr.querySelector(".actions"), [
+      {
+        label: "删除",
+        fn: () => doNetRemove(n.id || n.name),
         danger: true,
         disabled: !state.takeover || protectedNet,
-      })
-    );
+      },
+    ]);
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="5" class="muted">无网络</td></tr>`;
@@ -1195,14 +1313,14 @@ function renderVolumes() {
   items.forEach((v) => {
     const tr = document.createElement("tr");
     tr.innerHTML = `
-      <td><strong>${escapeHtml(v.name)}</strong></td>
-      <td>${escapeHtml(v.driver || "-")}</td>
-      <td class="mono small">${escapeHtml(v.mountpoint || "-")}</td>
-      <td class="actions"></td>
+      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(v.name || "")}">${escapeHtml(v.name)}</strong></td>
+      <td class="col-status">${escapeHtml(v.driver || "-")}</td>
+      <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(v.mountpoint || "")}">${escapeHtml(v.mountpoint || "-")}</span></td>
+      <td class="col-actions actions"></td>
     `;
-    tr.querySelector(".actions").appendChild(
-      actionBtn("删除", () => doVolRemove(v.name), { danger: true, disabled: !state.takeover })
-    );
+    fillActionGroup(tr.querySelector(".actions"), [
+      { label: "删除", fn: () => doVolRemove(v.name), danger: true, disabled: !state.takeover },
+    ]);
     body.appendChild(tr);
   });
   if (!items.length) body.innerHTML = `<tr><td colspan="4" class="muted">无命名卷（Unraid 多为 bind mount）</td></tr>`;
@@ -2039,3 +2157,10 @@ if (!state.token) {
 }
 loadAll();
 setInterval(loadAll, 60000);
+
+// close action menus when clicking outside
+document.addEventListener("click", (e) => {
+  document.querySelectorAll("details.action-menu[open]").forEach((d) => {
+    if (!d.contains(e.target)) d.open = false;
+  });
+});

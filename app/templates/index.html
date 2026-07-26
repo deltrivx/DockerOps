@@ -57,7 +57,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.4.5 · —
+        v0.4.6 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -236,7 +236,17 @@
             <button type="button" class="btn small danger" data-batch="remove">批量删除</button>
           </div>
           <div class="table-wrap">
-            <table>
+            <table class="containers-table data-table">
+              <colgroup>
+                <col style="width:2.2rem" />
+                <col style="width:16%" />
+                <col style="width:6.2rem" />
+                <col />
+                <col style="width:5.2rem" />
+                <col style="width:4.8rem" />
+                <col style="width:3.2rem" />
+                <col style="width:12rem" />
+              </colgroup>
               <thead>
                 <tr>
                   <th></th>
@@ -272,16 +282,25 @@
           </div>
           <div id="update-progress" class="muted small" hidden></div>
           <div class="table-wrap">
-            <table>
+            <table class="data-table updates-table">
+              <colgroup>
+                <col style="width:2.2rem" />
+                <col style="width:16%" />
+                <col style="width:6.2rem" />
+                <col />
+                <col style="width:5.2rem" />
+                <col style="width:18%" />
+                <col style="width:8rem" />
+              </colgroup>
               <thead>
                 <tr>
-                  <th style="width:2.2rem"><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
-                  <th style="width:18%">容器</th>
-                  <th style="width:10%">管理源</th>
+                  <th><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
+                  <th>容器</th>
+                  <th>管理源</th>
                   <th>镜像</th>
-                  <th style="width:8%">状态</th>
-                  <th style="width:18%">检测结果</th>
-                  <th style="width:12%">操作</th>
+                  <th>状态</th>
+                  <th>检测结果</th>
+                  <th>操作</th>
                 </tr>
               </thead>
               <tbody id="update-rows">
@@ -368,20 +387,20 @@
             <span class="muted small" id="image-sel-count">已选 0</span>
           </div>
           <div class="table-wrap">
-            <table class="images-table">
+            <table class="images-table data-table">
               <colgroup>
                 <col style="width:2.2rem" />
                 <col />
-                <col style="width:7.5rem" />
-                <col style="width:6.5rem" />
-                <col style="width:9rem" />
+                <col style="width:7rem" />
                 <col style="width:5.5rem" />
                 <col style="width:8.5rem" />
+                <col style="width:4.5rem" />
+                <col style="width:7.5rem" />
               </colgroup>
               <thead>
                 <tr>
                   <th><input type="checkbox" id="img-check-all" title="全选" /></th>
-                  <th>标签</th>
+                  <th>镜像</th>
                   <th>ID</th>
                   <th>大小</th>
                   <th>创建</th>
@@ -599,7 +618,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.4.5</span> ·
+        DockerOps <span id="foot-version">v0.4.6</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
