@@ -123,7 +123,7 @@ def default_remote_settings() -> dict[str, Any]:
     return {
         "enabled": False,
         "role": "",  # controller | agent | ""
-        "agent_mode": "collab",  # collab | managed
+        "agent_mode": "",  # collab | managed | "" (未选，用于分步 UI)
         "display_name": "",
         "controller_base_url": "",  # legacy / unused in 0.8 dial direction
         "public_base_url": "",  # agent: address embedded in pair
@@ -170,7 +170,8 @@ def set_remote_settings(patch: dict[str, Any], *, actor: str | None = None) -> d
             cur[k] = role if role in ("controller", "agent", "") else cur[k]
         elif k == "agent_mode":
             mode = str(v or "").strip().lower()
-            cur[k] = mode if mode in ("collab", "managed") else cur[k]
+            if mode in ("collab", "managed", ""):
+                cur[k] = mode
         elif k == "status":
             st = str(v or "").strip().lower()
             if st in ("idle", "waiting_pair", "connected", "managed_lock"):
@@ -294,7 +295,7 @@ def parse_pair_code(pair_code: str) -> dict[str, Any]:
 def create_pair_code(
     *,
     public_base_url: str,
-    mode: str = "collab",
+    mode: str = "",
     agent_name: str = "",
     created_by: str = "",
 ) -> dict[str, Any]:
@@ -302,7 +303,10 @@ def create_pair_code(
     ensure_remote_tables()
     _expire_pairs()
     base = normalize_base_url(public_base_url, label="本机公网域名或 IP")
-    mode_n = "managed" if str(mode).lower() == "managed" else "collab"
+    mode_raw = str(mode or "").lower().strip()
+    if mode_raw not in ("collab", "managed"):
+        raise ValueError("请先选择协同或托管模式")
+    mode_n = mode_raw
     name = (agent_name or get_remote_settings().get("display_name") or "被控").strip() or "被控"
     code_id = uuid.uuid4().hex[:12]
     secret = secrets.token_urlsafe(9).replace("-", "").replace("_", "")[:10].upper()
@@ -1076,7 +1080,7 @@ def public_remote_status() -> dict[str, Any]:
     return {
         "enabled": bool(st.get("enabled")),
         "role": role,
-        "agent_mode": st.get("agent_mode") or "collab",
+        "agent_mode": st.get("agent_mode") or "",
         "display_name": st.get("display_name") or "",
         "controller_base_url": st.get("controller_base_url") or "",
         "public_base_url": st.get("public_base_url") or "",

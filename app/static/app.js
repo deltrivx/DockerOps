@@ -2877,6 +2877,129 @@ async function loadSystemSettings() {
   }
 }
 
+/** Progressive disclosure for remote settings form (local UI only). */
+function syncRemoteFormVisibility(opts = {}) {
+  const st = state.remote?.settings || state.remote?.status || {};
+  const status = state.remote?.status || st;
+  const runtime = state.remote?.runtime || {};
+  const phase = opts.phase || st.ui_phase || status.ui_phase || "setup";
+  const enEl = $("#remote-enabled");
+  const enabled = enEl ? !!enEl.checked : !!st.enabled;
+  const roleEl = $("#remote-role");
+  const role = roleEl ? roleEl.value || "" : st.role || "";
+  const isCtrl = role === "controller";
+  const isAgent = role === "agent";
+  const modeEl = $("#remote-agent-mode");
+  const mode = modeEl ? modeEl.value || "" : st.agent_mode || "";
+  const hasMode = mode === "collab" || mode === "managed";
+  const pubEl = $("#remote-public-url");
+  const hasUrl = !!(pubEl && (pubEl.value || "").trim());
+  const pairCode = (($("#remote-pair-code")?.textContent || "").trim());
+  const hasPair = !!(pairCode && pairCode !== "—");
+  const waiting = phase === "waiting" || st.status === "waiting_pair";
+  const connectedPhase =
+    phase === "collab_banner" ||
+    phase === "managed_full" ||
+    st.status === "connected" ||
+    st.status === "managed_lock";
+  const modePick = phase === "mode_pick";
+  const sessions = status.sessions || state.remote?.status?.sessions || [];
+  const hasSessions = Array.isArray(sessions) && sessions.length > 0;
+
+  const introOff = $("#remote-intro-off");
+  const introOn = $("#remote-intro-on");
+  if (introOff) introOff.hidden = enabled;
+  if (introOn) introOn.hidden = !enabled;
+
+  const stepRole = $("#remote-step-role");
+  if (stepRole) stepRole.hidden = !enabled;
+
+  const rowName = $("#row-remote-display-name");
+  const saveBar = $("#remote-save-bar");
+  if (rowName) rowName.hidden = !(enabled && (isCtrl || isAgent));
+  if (saveBar) saveBar.hidden = !(enabled && (isCtrl || isAgent));
+
+  const ctrlPanel = $("#remote-controller-panel");
+  const agentPanel = $("#remote-agent-panel");
+  if (ctrlPanel) ctrlPanel.hidden = !(enabled && isCtrl);
+  if (agentPanel) agentPanel.hidden = !(enabled && isAgent);
+
+  // controller: session table only when there are nodes (or after first connect attempt)
+  const sessWrap = $("#remote-session-table-wrap");
+  if (sessWrap) {
+    sessWrap.hidden = !(enabled && isCtrl && (hasSessions || runtime.online_count > 0 || opts.forceSessions));
+  }
+
+  if (enabled && isAgent) {
+    const setup = $("#remote-agent-setup");
+    const conn = $("#remote-agent-connected");
+    const showConnected = connectedPhase && !modePick && !waiting;
+    if (setup) setup.hidden = !!showConnected;
+    if (conn) conn.hidden = !showConnected;
+
+    const rowUrl = $("#row-remote-public-url");
+    const urlHint = $("#remote-agent-url-hint");
+    const actions = $("#remote-agent-actions");
+    const pairBox = $("#remote-pair-box");
+    const applyBtn = $("#btn-remote-apply-mode");
+    const discBtn = $("#btn-remote-disconnect");
+    const pairBtn = $("#btn-remote-pair");
+    const regenBtn = $("#btn-remote-pair-regen");
+    const modeRow = $("#row-remote-agent-mode");
+
+    // mode_pick: only mode + apply; hide url/pair until applied path regenerates
+    if (modePick) {
+      if (modeRow) modeRow.hidden = false;
+      if (rowUrl) rowUrl.hidden = true;
+      if (urlHint) urlHint.hidden = true;
+      if (actions) actions.hidden = false;
+      if (pairBtn) pairBtn.hidden = true;
+      if (applyBtn) applyBtn.hidden = !hasMode;
+      if (discBtn) discBtn.hidden = false;
+      if (pairBox) pairBox.hidden = true;
+      if (regenBtn) regenBtn.hidden = true;
+    } else if (waiting && hasPair) {
+      // waiting for controller: focus on pair box
+      if (modeRow) modeRow.hidden = true;
+      if (rowUrl) rowUrl.hidden = true;
+      if (urlHint) urlHint.hidden = true;
+      if (actions) actions.hidden = false;
+      if (pairBtn) pairBtn.hidden = true;
+      if (applyBtn) applyBtn.hidden = true;
+      if (discBtn) discBtn.hidden = false;
+      if (pairBox) pairBox.hidden = false;
+      if (regenBtn) regenBtn.hidden = false;
+    } else if (showConnected) {
+      // connected panel handles UI
+    } else {
+      // setup wizard: mode → url → generate
+      if (modeRow) modeRow.hidden = false;
+      if (rowUrl) rowUrl.hidden = !hasMode;
+      if (urlHint) urlHint.hidden = !hasMode;
+      if (actions) actions.hidden = !(hasMode && hasUrl);
+      if (pairBtn) pairBtn.hidden = !(hasMode && hasUrl);
+      if (applyBtn) applyBtn.hidden = true;
+      if (discBtn) discBtn.hidden = !!(st.active_session_id || hasPair);
+      if (pairBox) pairBox.hidden = true;
+      if (regenBtn) regenBtn.hidden = true;
+    }
+
+    if (showConnected) {
+      const peer = st.active_peer_name || status.active_peer_name || "—";
+      const locked =
+        phase === "managed_full" ||
+        st.status === "managed_lock" ||
+        !!status.managed_locked;
+      const ct = $("#remote-agent-connected-text");
+      if (ct) {
+        ct.textContent = locked
+          ? `当前由远程设备「${peer}」完全管理`
+          : `远程设备「${peer}」正在协同管理`;
+      }
+    }
+  }
+}
+
 function applyRemoteSettingsUI(data) {
   const st = data?.settings || data?.status || data?.remote || {};
   const status = data?.status || data?.remote || st;
@@ -2889,18 +3012,20 @@ function applyRemoteSettingsUI(data) {
   const dn = $("#remote-display-name");
   if (dn) dn.value = st.display_name || "";
   const mode = $("#remote-agent-mode");
-  if (mode) mode.value = st.agent_mode || "collab";
+  if (mode) {
+    // keep empty option until user/server has a real mode in setup
+    const m = st.agent_mode || "";
+    const phase = st.ui_phase || status.ui_phase || "setup";
+    if (m === "collab" || m === "managed") mode.value = m;
+    else if (phase === "mode_pick") mode.value = "";
+    else if (!mode.value) mode.value = "";
+  }
   const pub = $("#remote-public-url");
-  if (pub) pub.value = st.public_base_url || "";
+  if (pub && st.public_base_url) pub.value = st.public_base_url;
 
   const show = !!st.enabled;
   const isCtrl = st.role === "controller";
   const isAgent = st.role === "agent";
-  const ctrlPanel = $("#remote-controller-panel");
-  const agentPanel = $("#remote-agent-panel");
-  if (ctrlPanel) ctrlPanel.hidden = !(show && isCtrl);
-  if (agentPanel) agentPanel.hidden = !(show && isAgent);
-
   const phase = st.ui_phase || status.ui_phase || "setup";
   const peer = st.active_peer_name || status.active_peer_name || "—";
   const locked = !!(
@@ -2915,52 +3040,18 @@ function applyRemoteSettingsUI(data) {
   );
   state.managedLocked = locked;
   applyManagedLockUI(locked, collabOn, status, st, runtime, peer);
-
-  // agent sub-panels: setup/waiting vs connected
-  if (isAgent) {
-    const setup = $("#remote-agent-setup");
-    const conn = $("#remote-agent-connected");
-    const applyBtn = $("#btn-remote-apply-mode");
-    const waiting = phase === "waiting" || st.status === "waiting_pair";
-    const connectedPhase =
-      phase === "collab_banner" ||
-      phase === "managed_full" ||
-      st.status === "connected" ||
-      st.status === "managed_lock";
-    if (phase === "mode_pick" || phase === "setup" || waiting || !connectedPhase) {
-      if (setup) setup.hidden = false;
-      if (conn) conn.hidden = true;
-      if (applyBtn) applyBtn.hidden = phase !== "mode_pick";
-    } else {
-      if (setup) setup.hidden = true;
-      if (conn) conn.hidden = false;
-      if (applyBtn) applyBtn.hidden = true;
-      const ct = $("#remote-agent-connected-text");
-      if (ct) {
-        ct.textContent =
-          locked || phase === "managed_full"
-            ? `当前由远程设备「${peer}」完全管理`
-            : `远程设备「${peer}」正在协同管理`;
-      }
-    }
-    if (waiting) {
-      const box = $("#remote-pair-box");
-      if (box && ($("#remote-pair-code")?.textContent || "").trim() && ($("#remote-pair-code")?.textContent || "") !== "—") {
-        box.hidden = false;
-      }
-    }
-  }
+  syncRemoteFormVisibility({ phase });
 
   const hint = $("#remote-banner-hint");
   if (hint) {
     hint.textContent =
       status.hint ||
       (!st.enabled
-        ? "远程模式关闭。开启后可选主控（粘贴凭证）或被控（生成凭证）。"
+        ? ""
         : isCtrl
           ? `主控端 · 已连接远程 ${status.online_count ?? 0} 台`
           : isAgent
-            ? status.hint || `被控端 · ${phase}`
+            ? status.hint || ""
             : "请选择本机角色：主控端或被控端");
   }
   const agSt = $("#remote-agent-status");
@@ -2969,17 +3060,21 @@ function applyRemoteSettingsUI(data) {
     else if (collabOn) agSt.textContent = `协同中 · ${peer}`;
     else if (phase === "waiting" || st.status === "waiting_pair") agSt.textContent = "等待主控连接…";
     else if (phase === "mode_pick") agSt.textContent = "请重新选择模式";
-    else agSt.textContent = "未连接";
+    else agSt.textContent = "";
   }
   const cSt = $("#remote-controller-status");
   if (cSt && isCtrl) {
     if (runtime.connecting) cSt.textContent = "连接中…";
     else if (runtime.last_error) cSt.textContent = runtime.last_error;
-    else cSt.textContent = runtime.online_count
-      ? `在线 ${runtime.online_count}`
-      : "";
+    else cSt.textContent = runtime.online_count ? `在线 ${runtime.online_count}` : "";
   }
   renderRemoteSessions(status.sessions || data?.status?.sessions || []);
+  // show session table if any
+  const sessWrap = $("#remote-session-table-wrap");
+  const sessions = status.sessions || data?.status?.sessions || [];
+  if (sessWrap && isCtrl && Array.isArray(sessions) && sessions.length) {
+    sessWrap.hidden = false;
+  }
   ensureRemotePolling(show && (isCtrl || isAgent));
 }
 
@@ -3143,10 +3238,11 @@ async function saveRemoteSettings() {
   const body = {
     enabled: !!$("#remote-enabled")?.checked,
     role: $("#remote-role")?.value || "",
-    agent_mode: $("#remote-agent-mode")?.value || "collab",
     display_name: ($("#remote-display-name")?.value || "").trim(),
     public_base_url: ($("#remote-public-url")?.value || "").trim(),
   };
+  const m = ($("#remote-agent-mode")?.value || "").trim();
+  if (m === "collab" || m === "managed") body.agent_mode = m;
   const stEl = $("#remote-settings-status");
   try {
     if (stEl) stEl.textContent = "保存中…";
@@ -3154,6 +3250,7 @@ async function saveRemoteSettings() {
     if (stEl) stEl.textContent = r.message || "已保存";
     applyRemoteSettingsUI(r);
     await loadEndpoints();
+    syncRemoteFormVisibility();
   } catch (e) {
     if (stEl) stEl.textContent = e.message || "保存失败";
   }
@@ -3161,19 +3258,26 @@ async function saveRemoteSettings() {
 
 async function createRemotePair() {
   if (!requireLogin()) return;
+  const mode = ($("#remote-agent-mode")?.value || "").trim();
+  if (mode !== "collab" && mode !== "managed") {
+    alert("请先选择协同或托管模式");
+    return;
+  }
   const public_base_url = ($("#remote-public-url")?.value || "").trim();
   if (!public_base_url) {
     alert("请填写本机公网域名或 IP（主控需能访问）");
     return;
   }
+  const stEl = $("#remote-agent-status");
   try {
+    if (stEl) stEl.textContent = "生成中…";
     // persist mode + url first
     await api("/api/remote/settings", {
       method: "PUT",
       body: JSON.stringify({
         enabled: true,
         role: "agent",
-        agent_mode: $("#remote-agent-mode")?.value || "collab",
+        agent_mode: mode,
         display_name: ($("#remote-display-name")?.value || "").trim() || "被控",
         public_base_url,
       }),
@@ -3182,16 +3286,31 @@ async function createRemotePair() {
       method: "POST",
       body: JSON.stringify({
         public_base_url,
-        mode: $("#remote-agent-mode")?.value || "collab",
+        mode,
         agent_name: ($("#remote-display-name")?.value || "").trim() || "被控",
       }),
     });
-    const box = $("#remote-pair-box");
-    if (box) box.hidden = false;
     const codeEl = $("#remote-pair-code");
     if (codeEl) codeEl.textContent = r.pair_code || "";
     const msg = $("#remote-pair-msg");
-    if (msg) msg.textContent = r.message || "等待主控连接…";
+    if (msg) msg.textContent = r.message || "等待主控在时限内粘贴连接…";
+    if (state.remote) {
+      state.remote.settings = {
+        ...(state.remote.settings || {}),
+        enabled: true,
+        role: "agent",
+        agent_mode: mode,
+        public_base_url,
+        ui_phase: "waiting",
+        status: "waiting_pair",
+      };
+      state.remote.status = {
+        ...(state.remote.status || {}),
+        ui_phase: "waiting",
+        status: "waiting_pair",
+      };
+    }
+    syncRemoteFormVisibility({ phase: "waiting" });
     let left = Number(r.expires_in || 60);
     const ttl = $("#remote-pair-ttl");
     if (state.remotePairTimer) clearInterval(state.remotePairTimer);
@@ -3200,12 +3319,16 @@ async function createRemotePair() {
       if (left <= 0) {
         clearInterval(state.remotePairTimer);
         state.remotePairTimer = null;
+        const regen = $("#btn-remote-pair-regen");
+        if (regen) regen.hidden = false;
+        if (msg) msg.textContent = "凭证已过期，可点「重新生成」";
         return;
       }
       left -= 1;
     };
     tick();
     state.remotePairTimer = setInterval(tick, 1000);
+    if (stEl) stEl.textContent = "等待主控连接…";
     const codeId = r.code_id;
     const poll = setInterval(async () => {
       try {
@@ -3216,13 +3339,15 @@ async function createRemotePair() {
         }
         if (ps.status === "expired" || left <= 0) {
           clearInterval(poll);
-          if (msg && ps.status === "expired") msg.textContent = "凭证已过期，请重新生成";
+          if (msg) msg.textContent = "凭证已过期，可点「重新生成」";
+          syncRemoteFormVisibility({ phase: "waiting" });
         }
       } catch (_) {
         clearInterval(poll);
       }
     }, 2000);
   } catch (e) {
+    if (stEl) stEl.textContent = e.message || "生成失败";
     alert(e.message || String(e));
   }
 }
@@ -3238,6 +3363,15 @@ async function connectRemoteController() {
   const stEl = $("#remote-controller-status");
   try {
     if (stEl) stEl.textContent = "连接中…";
+    // ensure role saved as controller
+    await api("/api/remote/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: true,
+        role: "controller",
+        display_name: ($("#remote-display-name")?.value || "").trim() || "主控",
+      }),
+    }).catch(() => null);
     const r = await api("/api/remote/controller/connect", {
       method: "POST",
       body: JSON.stringify({
@@ -3246,9 +3380,14 @@ async function connectRemoteController() {
       }),
     });
     if (stEl) stEl.textContent = r.message || "已连接";
+    const input = $("#remote-pair-input");
+    if (input) input.value = "";
+    const sessWrap = $("#remote-session-table-wrap");
+    if (sessWrap) sessWrap.hidden = false;
     alert(r.message || "已连接被控");
     await loadRemoteSettings();
     await loadEndpoints();
+    syncRemoteFormVisibility({ forceSessions: true });
   } catch (e) {
     if (stEl) stEl.textContent = e.message || "连接失败";
     alert(e.message || String(e));
@@ -3259,9 +3398,18 @@ async function disconnectRemoteAgent() {
   if (!requireLogin()) return;
   try {
     await api("/api/remote/agent/disconnect", { method: "POST", body: "{}" });
+    if (state.remotePairTimer) {
+      clearInterval(state.remotePairTimer);
+      state.remotePairTimer = null;
+    }
+    const codeEl = $("#remote-pair-code");
+    if (codeEl) codeEl.textContent = "—";
+    const ttl = $("#remote-pair-ttl");
+    if (ttl) ttl.textContent = "—";
     const box = $("#remote-pair-box");
     if (box) box.hidden = true;
     await loadRemoteSettings();
+    syncRemoteFormVisibility();
   } catch (e) {
     alert(e.message || String(e));
   }
@@ -3274,9 +3422,16 @@ async function switchRemoteAgentMode(mode) {
       method: "POST",
       body: JSON.stringify({ mode: mode || "mode_pick" }),
     });
+    if (mode === "mode_pick") {
+      const modeEl = $("#remote-agent-mode");
+      if (modeEl) modeEl.value = "";
+    }
     if (r.message && mode && mode !== "mode_pick") alert(r.message);
     applyRemoteSettingsUI(r);
     await loadRemoteSettings();
+    syncRemoteFormVisibility({
+      phase: mode === "mode_pick" ? "mode_pick" : undefined,
+    });
   } catch (e) {
     alert(e.message || String(e));
   }
@@ -3580,6 +3735,7 @@ $("#btn-save-sys-settings")?.addEventListener("click", async () => {
 
 $("#btn-remote-save")?.addEventListener("click", () => saveRemoteSettings());
 $("#btn-remote-pair")?.addEventListener("click", () => createRemotePair());
+$("#btn-remote-pair-regen")?.addEventListener("click", () => createRemotePair());
 $("#btn-remote-copy-pair")?.addEventListener("click", async () => {
   const code = ($("#remote-pair-code")?.textContent || "").trim();
   if (!code || code === "—") return;
@@ -3594,6 +3750,7 @@ $("#btn-remote-copy-pair")?.addEventListener("click", async () => {
 $("#btn-remote-refresh-sessions")?.addEventListener("click", async () => {
   await loadRemoteSettings();
   await loadEndpoints();
+  syncRemoteFormVisibility({ forceSessions: true });
 });
 $("#btn-remote-connect")?.addEventListener("click", () => connectRemoteController());
 $("#btn-remote-disconnect")?.addEventListener("click", () => disconnectRemoteAgent());
@@ -3604,7 +3761,11 @@ $("#btn-remote-switch-mode")?.addEventListener("click", () => switchRemoteAgentM
 $("#btn-remote-collab-switch")?.addEventListener("click", () => switchRemoteAgentMode("mode_pick"));
 $("#btn-remote-agent-switch-mode")?.addEventListener("click", () => switchRemoteAgentMode("mode_pick"));
 $("#btn-remote-apply-mode")?.addEventListener("click", () => {
-  const m = $("#remote-agent-mode")?.value || "collab";
+  const m = $("#remote-agent-mode")?.value || "";
+  if (m !== "collab" && m !== "managed") {
+    alert("请选择协同或托管");
+    return;
+  }
   switchRemoteAgentMode(m);
 });
 $("#btn-remote-goto-settings")?.addEventListener("click", () => {
@@ -3616,22 +3777,40 @@ $("#btn-remote-goto-settings")?.addEventListener("click", () => {
       p.hidden = p.getAttribute("data-panel") !== "settings";
     });
   }
+  // scroll to remote section
+  setTimeout(() => {
+    $("#remote-mode-section")?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+  }, 50);
 });
 $("#remote-enabled")?.addEventListener("change", () => {
-  const on = !!$("#remote-enabled")?.checked;
-  const role = $("#remote-role")?.value || "";
-  const ctrlPanel = $("#remote-controller-panel");
-  const agentPanel = $("#remote-agent-panel");
-  if (ctrlPanel) ctrlPanel.hidden = !(on && role === "controller");
-  if (agentPanel) agentPanel.hidden = !(on && role === "agent");
+  syncRemoteFormVisibility();
+  // auto-save enable toggle for clearer UX when turning off
+  if (!$("#remote-enabled")?.checked) {
+    saveRemoteSettings().catch?.(() => null);
+  }
 });
 $("#remote-role")?.addEventListener("change", () => {
-  const on = !!$("#remote-enabled")?.checked;
   const role = $("#remote-role")?.value || "";
-  const ctrlPanel = $("#remote-controller-panel");
-  const agentPanel = $("#remote-agent-panel");
-  if (ctrlPanel) ctrlPanel.hidden = !(on && role === "controller");
-  if (agentPanel) agentPanel.hidden = !(on && role === "agent");
+  const dn = $("#remote-display-name");
+  if (dn && !(dn.value || "").trim()) {
+    dn.placeholder = role === "controller" ? "例如：Tower 主控" : role === "agent" ? "例如：飞牛被控" : "显示名称";
+  }
+  // reset agent mode UI when switching role
+  if (role === "agent") {
+    const mode = $("#remote-agent-mode");
+    // keep server value if any; otherwise empty for wizard
+    if (mode && !mode.value) mode.value = "";
+  }
+  syncRemoteFormVisibility();
+});
+$("#remote-agent-mode")?.addEventListener("change", () => {
+  syncRemoteFormVisibility();
+});
+$("#remote-public-url")?.addEventListener("input", () => {
+  syncRemoteFormVisibility();
+});
+$("#remote-public-url")?.addEventListener("change", () => {
+  syncRemoteFormVisibility();
 });
 
 $("#btn-image-pull").addEventListener("click", async () => {

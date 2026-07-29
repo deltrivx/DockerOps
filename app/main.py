@@ -155,8 +155,17 @@ from remote_controller import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.8.0"
+VERSION = "0.8.1"
 CHANGELOG = [
+    {
+        "version": "0.8.1",
+        "date": "2026-07-29",
+        "items": [
+            "远程设置改为分步动态显示：关→仅开关；开→选角色；被控再逐步出模式/公网地址/生成凭证",
+            "等待连接时聚焦凭证与倒计时；主控节点表仅在有连接后显示",
+            "切换模式回到精简重选界面；生成前校验已选协同/托管",
+        ],
+    },
     {
         "version": "0.8.0",
         "date": "2026-07-29",

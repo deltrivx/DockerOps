@@ -1363,6 +1363,27 @@ body.auth-locked .shell {
 .remote-collab-banner[hidden] {
   display: none !important;
 }
+.remote-pair-box {
+  padding: 0.75rem 0.9rem;
+  border-radius: 10px;
+  border: 1px solid rgba(0, 243, 255, 0.28);
+  background: rgba(0, 243, 255, 0.06);
+}
+#remote-step-role[hidden],
+#remote-controller-panel[hidden],
+#remote-agent-panel[hidden],
+#remote-agent-setup[hidden],
+#remote-agent-connected[hidden],
+#remote-pair-box[hidden],
+#row-remote-public-url[hidden],
+#row-remote-display-name[hidden],
+#remote-save-bar[hidden],
+#remote-agent-actions[hidden],
+#remote-session-table-wrap[hidden],
+#remote-intro-on[hidden],
+#remote-intro-off[hidden] {
+  display: none !important;
+}
 .remote-lock-inner {
   display: flex;
   flex-wrap: wrap;
