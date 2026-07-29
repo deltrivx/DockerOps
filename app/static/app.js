@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.6.2",
+  version: "0.6.3",
   tab: "overview",
   endpoints: [],
   endpointId: localStorage.getItem("dockerops_endpoint") || "",
@@ -1417,17 +1417,26 @@ async function loadAll(opts = {}) {
     label.className = `badge ${scoreClass(Number(score) || 0)}`;
 
     const advice = $("#advice");
-    advice.innerHTML = "";
-    const tips = [
-      ...(doctor.advice || []),
-      ...(summary.hints || []),
-      ...(platform.mount_hints || []).slice(0, 3),
-    ];
-    tips.forEach((a) => {
-      const li = document.createElement("li");
-      li.textContent = a;
-      advice.appendChild(li);
-    });
+    if (advice) {
+      advice.innerHTML = "";
+      const tips = [
+        ...(doctor.advice || []),
+        ...(summary.hints || []),
+        ...(platform.mount_hints || []).slice(0, 3),
+      ];
+      if (!tips.length) {
+        const li = document.createElement("li");
+        li.className = "muted";
+        li.textContent = "暂无诊断建议，系统状态良好时可为空。";
+        advice.appendChild(li);
+      } else {
+        tips.forEach((a) => {
+          const li = document.createElement("li");
+          li.textContent = a;
+          advice.appendChild(li);
+        });
+      }
+    }
 
     renderOverviewCards({
       doctor,
@@ -2952,7 +2961,6 @@ window.addEventListener("resize", () => {
 });
 
 $("#btn-menu")?.addEventListener("click", () => setSidebarOpen(true));
-$("#btn-sidebar-close")?.addEventListener("click", () => setSidebarOpen(false));
 $("#sidebar-backdrop")?.addEventListener("click", () => setSidebarOpen(false));
 
 ["container-filter", "container-status-filter", "container-mgr-filter"].forEach((id) => {

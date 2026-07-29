@@ -119,8 +119,16 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.6.2"
+VERSION = "0.6.3"
 CHANGELOG = [
+    {
+        "version": "0.6.3",
+        "date": "2026-07-29",
+        "items": [
+            "移除侧栏品牌区关闭叉号；移动端仍可点遮罩或切换菜单关闭抽屉",
+            "总览健康分下方诊断长文迁至「说明日志」页的健康诊断说明",
+        ],
+    },
     {
         "version": "0.6.2",
         "date": "2026-07-29",

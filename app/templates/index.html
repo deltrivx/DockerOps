@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.6.2') }}" />
-  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.6.2') }}" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.6.3') }}" />
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.6.3') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -20,7 +20,6 @@
           <div class="brand-title">DockerOps</div>
           <div class="brand-sub muted">NAS 运维控制台</div>
         </div>
-        <button type="button" class="btn icon-btn mobile-only" id="btn-sidebar-close" aria-label="关闭菜单">✕</button>
       </div>
       <nav class="side-nav" id="main-tabs">
         <button type="button" class="nav-item active" data-tab="overview">
@@ -58,7 +57,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.6.2 · —
+        v0.6.3 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -105,7 +104,6 @@
               <span class="stat-val" id="stat-updates">-</span><span class="stat-key">可更新</span>
             </div>
           </div>
-          <ul id="advice" class="advice"></ul>
         </section>
 
         <section class="card tab-panel" data-panel="overview">
@@ -566,6 +564,13 @@
               <p>飞牛为引擎级 Compose 接管；Unraid 推荐用模板安装 DockerOps 自身。镜像仅通过 GitHub Actions 远程构建发布到 GHCR。</p>
             </article>
           </div>
+          <div class="card-head mt">
+            <h2>健康诊断说明</h2>
+            <span class="muted small">来自总览 Doctor 建议与平台提示</span>
+          </div>
+          <ul id="advice" class="advice docs-advice">
+            <li class="muted">加载中…</li>
+          </ul>
           <div class="card-head mt"><h2>更新日志</h2></div>
           <div id="changelog-list" class="changelog">加载中…</div>
         </section>
@@ -720,7 +725,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.6.2</span> ·
+        DockerOps <span id="foot-version">v0.6.3</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -839,9 +844,9 @@
     <div id="image-detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.6.2') }}"></script>
-  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.6.2') }}"></script>
-  <script src="/static/particles.js?v={{ asset_v|default('0.6.2') }}"></script>
-  <script src="/static/app.js?v={{ asset_v|default('0.6.2') }}"></script>
+  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.6.3') }}"></script>
+  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.6.3') }}"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.6.3') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.6.3') }}"></script>
 </body>
 </html>
