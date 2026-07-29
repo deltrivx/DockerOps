@@ -184,12 +184,19 @@ def set_remote_settings(patch: dict[str, Any], *, actor: str | None = None) -> d
             cur[k] = "" if v is None else str(v)
     if not cur["enabled"]:
         cur["role"] = ""
+        cur["agent_mode"] = ""
         cur["status"] = "idle"
         cur["ui_phase"] = "setup"
         cur["active_session_id"] = ""
         cur["active_peer_name"] = ""
+        # keep public_base_url as optional remembered value for agent re-enable;
+        # UI will not show it until mode is chosen again
         cur.pop("_session_token", None)
         cur.pop("_controller_sessions", None)
+    # 主控不需要、也不应携带「被控模式」语义到 UI
+    if cur.get("role") == "controller":
+        cur["agent_mode"] = ""
+        cur["ui_phase"] = "setup"
     set_meta(META_REMOTE, json.dumps(cur, ensure_ascii=False))
     if actor:
         audit("remote_settings", actor=actor, detail={"enabled": cur["enabled"], "role": cur["role"]})

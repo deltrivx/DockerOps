@@ -2877,7 +2877,14 @@ async function loadSystemSettings() {
   }
 }
 
-/** Progressive disclosure for remote settings form (local UI only). */
+/**
+ * 分步显示（严格按你的流程）：
+ * 关 → 仅开关
+ * 开 → 仅角色
+ * 主控 → 仅粘贴凭证（不要公网；节点表有连接才出）
+ * 被控 → 先模式；选了模式才出本机地址；填了地址才出生成
+ * 模式未选时禁止露出地址/生成/凭证等后续项
+ */
 function syncRemoteFormVisibility(opts = {}) {
   const st = state.remote?.settings || state.remote?.status || {};
   const status = state.remote?.status || st;
@@ -2886,11 +2893,12 @@ function syncRemoteFormVisibility(opts = {}) {
   const enEl = $("#remote-enabled");
   const enabled = enEl ? !!enEl.checked : !!st.enabled;
   const roleEl = $("#remote-role");
-  const role = roleEl ? roleEl.value || "" : st.role || "";
+  const role = roleEl ? (roleEl.value || "").trim() : (st.role || "");
   const isCtrl = role === "controller";
   const isAgent = role === "agent";
   const modeEl = $("#remote-agent-mode");
-  const mode = modeEl ? modeEl.value || "" : st.agent_mode || "";
+  // 仅看当前下拉值，不拿服务端旧 agent_mode 推断「已选」——否则会未选手动模式却露出地址
+  const mode = modeEl ? (modeEl.value || "").trim() : "";
   const hasMode = mode === "collab" || mode === "managed";
   const pubEl = $("#remote-public-url");
   const hasUrl = !!(pubEl && (pubEl.value || "").trim());
@@ -2908,94 +2916,123 @@ function syncRemoteFormVisibility(opts = {}) {
 
   const introOff = $("#remote-intro-off");
   const introOn = $("#remote-intro-on");
+  const introCtrl = $("#remote-intro-controller");
+  const introAgent = $("#remote-intro-agent");
   if (introOff) introOff.hidden = enabled;
-  if (introOn) introOn.hidden = !enabled;
+  if (introOn) introOn.hidden = !enabled || isCtrl || isAgent;
+  if (introCtrl) introCtrl.hidden = !(enabled && isCtrl);
+  if (introAgent) introAgent.hidden = !(enabled && isAgent);
 
   const stepRole = $("#remote-step-role");
   if (stepRole) stepRole.hidden = !enabled;
 
+  // 显示名称：选了角色后再出（可选）；不与「模式」后续步骤绑在一起误导
   const rowName = $("#row-remote-display-name");
   const saveBar = $("#remote-save-bar");
   if (rowName) rowName.hidden = !(enabled && (isCtrl || isAgent));
-  if (saveBar) saveBar.hidden = !(enabled && (isCtrl || isAgent));
+  if (saveBar) saveBar.hidden = true; // 角色/名称随连接或生成时自动保存，减少杂项按钮
 
   const ctrlPanel = $("#remote-controller-panel");
   const agentPanel = $("#remote-agent-panel");
+  // 主控：无公网输入；被控面板在主控角色下必须隐藏
   if (ctrlPanel) ctrlPanel.hidden = !(enabled && isCtrl);
   if (agentPanel) agentPanel.hidden = !(enabled && isAgent);
 
-  // controller: session table only when there are nodes (or after first connect attempt)
   const sessWrap = $("#remote-session-table-wrap");
   if (sessWrap) {
-    sessWrap.hidden = !(enabled && isCtrl && (hasSessions || runtime.online_count > 0 || opts.forceSessions));
+    sessWrap.hidden = !(
+      enabled &&
+      isCtrl &&
+      (hasSessions || runtime.online_count > 0 || opts.forceSessions)
+    );
   }
 
-  if (enabled && isAgent) {
-    const setup = $("#remote-agent-setup");
-    const conn = $("#remote-agent-connected");
-    const showConnected = connectedPhase && !modePick && !waiting;
-    if (setup) setup.hidden = !!showConnected;
-    if (conn) conn.hidden = !showConnected;
+  // 非被控时收起被控内部控件，避免 hidden 面板内残留可见（部分浏览器/样式）
+  if (!(enabled && isAgent)) {
+    [
+      "#row-remote-public-url",
+      "#remote-agent-url-hint",
+      "#remote-agent-actions",
+      "#remote-pair-box",
+      "#remote-agent-connected",
+    ].forEach((sel) => {
+      const el = $(sel);
+      if (el) el.hidden = true;
+    });
+    return;
+  }
 
-    const rowUrl = $("#row-remote-public-url");
-    const urlHint = $("#remote-agent-url-hint");
-    const actions = $("#remote-agent-actions");
-    const pairBox = $("#remote-pair-box");
-    const applyBtn = $("#btn-remote-apply-mode");
-    const discBtn = $("#btn-remote-disconnect");
-    const pairBtn = $("#btn-remote-pair");
-    const regenBtn = $("#btn-remote-pair-regen");
-    const modeRow = $("#row-remote-agent-mode");
+  const setup = $("#remote-agent-setup");
+  const conn = $("#remote-agent-connected");
+  const showConnected = connectedPhase && !modePick && !waiting;
+  if (setup) setup.hidden = !!showConnected;
+  if (conn) conn.hidden = !showConnected;
 
-    // mode_pick: only mode + apply; hide url/pair until applied path regenerates
-    if (modePick) {
-      if (modeRow) modeRow.hidden = false;
-      if (rowUrl) rowUrl.hidden = true;
-      if (urlHint) urlHint.hidden = true;
-      if (actions) actions.hidden = false;
-      if (pairBtn) pairBtn.hidden = true;
-      if (applyBtn) applyBtn.hidden = !hasMode;
-      if (discBtn) discBtn.hidden = false;
-      if (pairBox) pairBox.hidden = true;
-      if (regenBtn) regenBtn.hidden = true;
-    } else if (waiting && hasPair) {
-      // waiting for controller: focus on pair box
-      if (modeRow) modeRow.hidden = true;
-      if (rowUrl) rowUrl.hidden = true;
-      if (urlHint) urlHint.hidden = true;
-      if (actions) actions.hidden = false;
-      if (pairBtn) pairBtn.hidden = true;
-      if (applyBtn) applyBtn.hidden = true;
-      if (discBtn) discBtn.hidden = false;
-      if (pairBox) pairBox.hidden = false;
-      if (regenBtn) regenBtn.hidden = false;
-    } else if (showConnected) {
-      // connected panel handles UI
-    } else {
-      // setup wizard: mode → url → generate
-      if (modeRow) modeRow.hidden = false;
-      if (rowUrl) rowUrl.hidden = !hasMode;
-      if (urlHint) urlHint.hidden = !hasMode;
-      if (actions) actions.hidden = !(hasMode && hasUrl);
-      if (pairBtn) pairBtn.hidden = !(hasMode && hasUrl);
-      if (applyBtn) applyBtn.hidden = true;
-      if (discBtn) discBtn.hidden = !!(st.active_session_id || hasPair);
-      if (pairBox) pairBox.hidden = true;
-      if (regenBtn) regenBtn.hidden = true;
+  const rowUrl = $("#row-remote-public-url");
+  const urlHint = $("#remote-agent-url-hint");
+  const actions = $("#remote-agent-actions");
+  const pairBox = $("#remote-pair-box");
+  const applyBtn = $("#btn-remote-apply-mode");
+  const discBtn = $("#btn-remote-disconnect");
+  const pairBtn = $("#btn-remote-pair");
+  const regenBtn = $("#btn-remote-pair-regen");
+  const modeRow = $("#row-remote-agent-mode");
+
+  const hideAgentFollowups = () => {
+    if (rowUrl) rowUrl.hidden = true;
+    if (urlHint) urlHint.hidden = true;
+    if (actions) actions.hidden = true;
+    if (pairBtn) pairBtn.hidden = true;
+    if (applyBtn) applyBtn.hidden = true;
+    if (discBtn) discBtn.hidden = true;
+    if (pairBox) pairBox.hidden = true;
+    if (regenBtn) regenBtn.hidden = true;
+  };
+
+  if (modePick) {
+    // 切换模式：只出模式 +（选好后）应用 / 断开
+    if (modeRow) modeRow.hidden = false;
+    hideAgentFollowups();
+    if (actions) actions.hidden = false;
+    if (applyBtn) applyBtn.hidden = !hasMode;
+    if (discBtn) discBtn.hidden = false;
+    if (pairBtn) pairBtn.hidden = true;
+  } else if (waiting && hasPair) {
+    if (modeRow) modeRow.hidden = true;
+    hideAgentFollowups();
+    if (actions) actions.hidden = false;
+    if (discBtn) discBtn.hidden = false;
+    if (pairBox) pairBox.hidden = false;
+    if (regenBtn) regenBtn.hidden = false;
+  } else if (showConnected) {
+    if (modeRow) modeRow.hidden = true;
+    hideAgentFollowups();
+    const peer = st.active_peer_name || status.active_peer_name || "—";
+    const locked =
+      phase === "managed_full" ||
+      st.status === "managed_lock" ||
+      !!status.managed_locked;
+    const ct = $("#remote-agent-connected-text");
+    if (ct) {
+      ct.textContent = locked
+        ? `当前由远程设备「${peer}」完全管理`
+        : `远程设备「${peer}」正在协同管理`;
     }
-
-    if (showConnected) {
-      const peer = st.active_peer_name || status.active_peer_name || "—";
-      const locked =
-        phase === "managed_full" ||
-        st.status === "managed_lock" ||
-        !!status.managed_locked;
-      const ct = $("#remote-agent-connected-text");
-      if (ct) {
-        ct.textContent = locked
-          ? `当前由远程设备「${peer}」完全管理`
-          : `远程设备「${peer}」正在协同管理`;
-      }
+  } else {
+    // 配置向导：未选模式 → 只显示模式；选了才地址；有地址才生成
+    if (modeRow) modeRow.hidden = false;
+    if (!hasMode) {
+      hideAgentFollowups();
+      // 清空地址框视觉残留不影响：隐藏即可；值可保留但用户看不见
+    } else {
+      if (rowUrl) rowUrl.hidden = false;
+      if (urlHint) urlHint.hidden = false;
+      if (actions) actions.hidden = !hasUrl;
+      if (pairBtn) pairBtn.hidden = !hasUrl;
+      if (applyBtn) applyBtn.hidden = true;
+      if (discBtn) discBtn.hidden = true;
+      if (pairBox) pairBox.hidden = true;
+      if (regenBtn) regenBtn.hidden = true;
     }
   }
 }
@@ -3011,22 +3048,46 @@ function applyRemoteSettingsUI(data) {
   if (role) role.value = st.role || "";
   const dn = $("#remote-display-name");
   if (dn) dn.value = st.display_name || "";
+
+  const phase = st.ui_phase || status.ui_phase || "setup";
+  const isAgent = st.role === "agent";
+  const isCtrl = st.role === "controller";
+  const waiting = phase === "waiting" || st.status === "waiting_pair";
+  const connectedPhase =
+    phase === "collab_banner" ||
+    phase === "managed_full" ||
+    st.status === "connected" ||
+    st.status === "managed_lock";
+  const modePick = phase === "mode_pick";
+
   const mode = $("#remote-agent-mode");
   if (mode) {
-    // keep empty option until user/server has a real mode in setup
-    const m = st.agent_mode || "";
-    const phase = st.ui_phase || status.ui_phase || "setup";
-    if (m === "collab" || m === "managed") mode.value = m;
-    else if (phase === "mode_pick") mode.value = "";
-    else if (!mode.value) mode.value = "";
+    const m = (st.agent_mode || "").trim();
+    // 配置向导阶段：不把服务端历史 collab 灌进下拉，避免「模式未选却露出地址」
+    if (modePick) {
+      mode.value = "";
+    } else if (isAgent && (waiting || connectedPhase) && (m === "collab" || m === "managed")) {
+      mode.value = m;
+    } else if (isAgent && (m === "collab" || m === "managed") && state.remoteWizardModeLocked) {
+      mode.value = m;
+    } else if (isAgent) {
+      mode.value = "";
+      state.remoteWizardModeLocked = false;
+    } else {
+      mode.value = "";
+    }
   }
   const pub = $("#remote-public-url");
-  if (pub && st.public_base_url) pub.value = st.public_base_url;
+  if (pub) {
+    // 主控永不展示/不依赖公网；被控仅在向导需要时带出已存地址（仍受 hasMode 控制显示）
+    if (isAgent && (st.public_base_url || "")) {
+      pub.value = st.public_base_url;
+    } else if (!isAgent) {
+      pub.value = "";
+    }
+  }
 
   const show = !!st.enabled;
-  const isCtrl = st.role === "controller";
-  const isAgent = st.role === "agent";
-  const phase = st.ui_phase || status.ui_phase || "setup";
   const peer = st.active_peer_name || status.active_peer_name || "—";
   const locked = !!(
     status.managed_locked ||
@@ -3036,7 +3097,7 @@ function applyRemoteSettingsUI(data) {
     isAgent &&
     !locked &&
     (phase === "collab_banner" ||
-      (st.status === "connected" && (st.agent_mode || "collab") !== "managed"))
+      (st.status === "connected" && (st.agent_mode || "") === "collab"))
   );
   state.managedLocked = locked;
   applyManagedLockUI(locked, collabOn, status, st, runtime, peer);
@@ -3049,7 +3110,7 @@ function applyRemoteSettingsUI(data) {
       (!st.enabled
         ? ""
         : isCtrl
-          ? `主控端 · 已连接远程 ${status.online_count ?? 0} 台`
+          ? `主控端 · 已连接远程 ${status.online_count ?? 0} 台（无需本机公网）`
           : isAgent
             ? status.hint || ""
             : "请选择本机角色：主控端或被控端");
@@ -3058,8 +3119,8 @@ function applyRemoteSettingsUI(data) {
   if (agSt && isAgent) {
     if (locked) agSt.textContent = `托管中 · ${peer}`;
     else if (collabOn) agSt.textContent = `协同中 · ${peer}`;
-    else if (phase === "waiting" || st.status === "waiting_pair") agSt.textContent = "等待主控连接…";
-    else if (phase === "mode_pick") agSt.textContent = "请重新选择模式";
+    else if (waiting) agSt.textContent = "等待主控连接…";
+    else if (modePick) agSt.textContent = "请重新选择模式";
     else agSt.textContent = "";
   }
   const cSt = $("#remote-controller-status");
@@ -3069,7 +3130,6 @@ function applyRemoteSettingsUI(data) {
     else cSt.textContent = runtime.online_count ? `在线 ${runtime.online_count}` : "";
   }
   renderRemoteSessions(status.sessions || data?.status?.sessions || []);
-  // show session table if any
   const sessWrap = $("#remote-session-table-wrap");
   const sessions = status.sessions || data?.status?.sessions || [];
   if (sessWrap && isCtrl && Array.isArray(sessions) && sessions.length) {
@@ -3294,6 +3354,7 @@ async function createRemotePair() {
     if (codeEl) codeEl.textContent = r.pair_code || "";
     const msg = $("#remote-pair-msg");
     if (msg) msg.textContent = r.message || "等待主控在时限内粘贴连接…";
+    state.remoteWizardModeLocked = true;
     if (state.remote) {
       state.remote.settings = {
         ...(state.remote.settings || {}),
@@ -3783,27 +3844,52 @@ $("#btn-remote-goto-settings")?.addEventListener("click", () => {
   }, 50);
 });
 $("#remote-enabled")?.addEventListener("change", () => {
+  const on = !!$("#remote-enabled")?.checked;
+  if (!on) {
+    // 关闭：清向导态，避免再开时残留「已选模式」露出后续项
+    state.remoteWizardModeLocked = false;
+    const mode = $("#remote-agent-mode");
+    if (mode) mode.value = "";
+    const pub = $("#remote-public-url");
+    if (pub) pub.value = "";
+    const codeEl = $("#remote-pair-code");
+    if (codeEl) codeEl.textContent = "—";
+    const role = $("#remote-role");
+    if (role) role.value = "";
+  }
   syncRemoteFormVisibility();
-  // auto-save enable toggle for clearer UX when turning off
-  if (!$("#remote-enabled")?.checked) {
+  if (!on) {
     saveRemoteSettings().catch?.(() => null);
   }
 });
 $("#remote-role")?.addEventListener("change", () => {
-  const role = $("#remote-role")?.value || "";
+  const role = ($("#remote-role")?.value || "").trim();
   const dn = $("#remote-display-name");
   if (dn && !(dn.value || "").trim()) {
-    dn.placeholder = role === "controller" ? "例如：Tower 主控" : role === "agent" ? "例如：飞牛被控" : "显示名称";
+    dn.placeholder =
+      role === "controller" ? "例如：Tower 主控" : role === "agent" ? "例如：飞牛被控" : "显示名称";
   }
-  // reset agent mode UI when switching role
+  // 换角色：重置被控向导，主控绝不能带着公网/模式 UI
+  state.remoteWizardModeLocked = false;
+  const mode = $("#remote-agent-mode");
+  if (mode) mode.value = "";
+  if (role !== "agent") {
+    const pub = $("#remote-public-url");
+    // 不强制清空已存公网（被控再切回来可能有用），但主控 UI 不展示
+  }
   if (role === "agent") {
-    const mode = $("#remote-agent-mode");
-    // keep server value if any; otherwise empty for wizard
-    if (mode && !mode.value) mode.value = "";
+    // 新选被控：从「只选模式」开始，不预填历史 collab
+    if (mode) mode.value = "";
   }
   syncRemoteFormVisibility();
 });
 $("#remote-agent-mode")?.addEventListener("change", () => {
+  const m = ($("#remote-agent-mode")?.value || "").trim();
+  state.remoteWizardModeLocked = m === "collab" || m === "managed";
+  // 未选模式时清掉后续可见条件依赖的「误显」
+  if (!state.remoteWizardModeLocked) {
+    /* 地址值可留，但 sync 会 hidden */
+  }
   syncRemoteFormVisibility();
 });
 $("#remote-public-url")?.addEventListener("input", () => {

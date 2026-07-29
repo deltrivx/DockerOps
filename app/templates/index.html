@@ -649,12 +649,19 @@
           <div class="settings-section" id="remote-mode-section">
             <h3>远程模式</h3>
             <p class="muted small" id="remote-intro-off">
-              默认关闭，对本机无影响。开启后按步骤选择主控或被控；仅 DockerOps Web/WSS，
+              默认关闭，对本机无影响。开启后先选角色；仅 DockerOps Web/WSS，
               <strong>不</strong>开放 Docker 2375/2376。
             </p>
             <p class="muted small" id="remote-intro-on" hidden>
-              <strong>被控</strong>：选协同/托管 → 填本机公网域名或 IP → 生成 60 秒凭证。<br />
-              <strong>主控</strong>：粘贴被控凭证连接（本机功能不受影响）。主控须能访问被控地址。
+              请选择本机角色。后续输入会按步骤出现，未选完前不会展开。
+            </p>
+            <p class="muted small" id="remote-intro-controller" hidden>
+              <strong>主控端不需要公网。</strong>只需粘贴被控生成的连接凭证（凭证内已含被控地址）。
+              本机功能不受影响；你的网络须能访问被控填的地址（局域网或被控已映射/反代）。
+            </p>
+            <p class="muted small" id="remote-intro-agent" hidden>
+              <strong>被控端</strong>：先选协同/托管 → 再填<strong>本机</strong>公网域名或 IP（给主控连过来）→ 生成 60 秒凭证。
+              未选模式时不会出现地址与生成按钮。
             </p>
 
             <div class="settings-grid">
@@ -687,7 +694,7 @@
 
             <div id="remote-controller-panel" class="mt" hidden>
               <h4 class="muted" style="margin:0.75rem 0 0.35rem">主控 · 连接被控</h4>
-              <p class="muted small">将<strong>被控生成</strong>的连接凭证粘贴下方（内含被控地址）。可连接多台。</p>
+              <p class="muted small">本机<strong>不用填公网</strong>。将<strong>被控生成</strong>的连接凭证粘贴下方（内含被控地址）。可连接多台。</p>
               <div class="settings-grid">
                 <label class="setting-row" style="grid-column:1/-1">
                   <span>连接凭证</span>

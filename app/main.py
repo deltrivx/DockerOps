@@ -155,8 +155,17 @@ from remote_controller import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.8.1"
+VERSION = "0.8.2"
 CHANGELOG = [
+    {
+        "version": "0.8.2",
+        "date": "2026-07-29",
+        "items": [
+            "修正分步 UI：未选协同/托管时不露出公网地址与生成按钮（不再被服务端历史 mode 误展开）",
+            "明确主控端无需公网：仅粘贴被控凭证；公网/IP 仅被控填写",
+            "切换角色/关闭远程时重置向导态，避免主控界面夹带被控字段",
+        ],
+    },
     {
         "version": "0.8.1",
         "date": "2026-07-29",
