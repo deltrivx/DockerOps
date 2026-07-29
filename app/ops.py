@@ -8,6 +8,7 @@ from typing import Any, Callable
 from config import get_settings
 from db import add_ops_record, list_ops_records
 from docker_client import get_container, pull_image
+from host_platform import detect_platform
 
 ProgressCb = Callable[[dict[str, Any]], None] | None
 
@@ -234,29 +235,50 @@ def _safe_update_third_party(
         pull_err = str(e)
 
     status = "ok" if pull_ok else "failed"
+    try:
+        host_plat = detect_platform()
+    except Exception:
+        host_plat = "generic"
+    next_steps = [
+        "三方容器仅执行了备份 + 拉镜像，未重建（避免破坏原部署方式）。",
+        "若在 Unraid：POST /api/unraid/adopt/{id} 生成 my-*.xml 并按模板重建（非三方）。",
+        "若在 Compose/飞牛：将服务纳入 compose 项目、挂载 DOCKEROPS_COMPOSE_PROJECT_DIRS，"
+        "并开启 DOCKEROPS_TAKEOVER_ENABLED=true 后使用项目/一键更新（自动 force-recreate、"
+        "remove-orphans 与清理旧镜像）。",
+    ]
+    if host_plat == "fnos":
+        next_steps.insert(
+            0,
+            "当前主机疑似飞牛(FnOS)：三方容器无法自动替换运行中实例，"
+            "请用 Compose 管理该服务后再更新，否则仍需在飞牛侧手动停容器/重建。",
+        )
     rec = add_ops_record(
         action="update",
         target=name,
         status=status,
         detail={
             "manager": "third_party",
+            "platform": host_plat,
             "image": target_image,
             "backup_path": backup.get("backup_path"),
             "pull": pull_result,
             "error": pull_err,
-            "next_steps": [
-                "三方容器仅执行了备份 + 拉镜像，未重建（避免破坏原部署方式）。",
-                "若在 Unraid：POST /api/unraid/adopt/{id} 生成 my-*.xml 并按模板重建（非三方）。",
-                "若在 Compose：将服务纳入 compose 项目后使用 /api/compose/projects/{name}/update。",
-            ],
+            "partial": True,
+            "next_steps": next_steps,
         },
         actor=actor,
     )
-    msg = (
-        "三方容器：已备份并拉镜像；未裸 docker run 重建。可用 Adopt/Compose 纳入正规管理。"
-        if pull_ok
-        else f"拉镜像失败：{pull_err}"
-    )
+    if pull_ok:
+        msg = (
+            "三方容器：已备份并拉镜像，未重建运行实例。"
+            + (
+                "飞牛环境请纳入 Compose 并开启接管后重试自动更新。"
+                if host_plat == "fnos"
+                else "可用 Adopt/Compose 纳入正规管理后再自动重建。"
+            )
+        )
+    else:
+        msg = f"拉镜像失败：{pull_err}"
     _emit(
         on_progress,
         {
@@ -269,11 +291,14 @@ def _safe_update_third_party(
     )
     return {
         "ok": pull_ok,
+        "partial": bool(pull_ok),
         "manager": "third_party",
+        "platform": host_plat,
         "record": rec,
         "backup": backup,
         "pull": pull_result,
         "message": msg,
+        "next_steps": next_steps if pull_ok else None,
         "adopt_path": f"/api/unraid/adopt/{detail.get('id') or name}",
     }
 

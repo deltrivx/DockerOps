@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.6.0",
+  version: "0.6.2",
   tab: "overview",
   endpoints: [],
   endpointId: localStorage.getItem("dockerops_endpoint") || "",
@@ -2436,7 +2436,7 @@ async function doBackup(id) {
 
 async function doUpdate(id) {
   if (!requireLogin()) return;
-  if (!confirm(`对 ${id} 按管理源执行安全更新？\nCompose→项目 · Unraid→模板重建 · 三方→仅拉镜像`)) return;
+  if (!confirm(`对 ${id} 按管理源执行安全更新？\nCompose→pull+force-recreate+remove-orphans+清旧镜像\nUnraid→模板重建+清旧镜像\n三方→仅拉镜像（不重建）\n需开启完整接管才会真正替换容器`)) return;
   await runUpdateStream(`/api/ops/update/${encodeURIComponent(id)}/stream`, {}, `更新 · ${id}`);
 }
 
@@ -2660,7 +2660,7 @@ async function doComposeBackup(name) {
 
 async function doComposeUpdate(name) {
   if (!requireLogin()) return;
-  if (!confirm(`安全更新 Compose 项目 ${name}？`)) return;
+  if (!confirm(`安全更新 Compose 项目 ${name}？\n将 force-recreate + remove-orphans，成功后清理旧镜像（需完整接管）。`)) return;
   try {
     const r = await api(`/api/compose/projects/${encodeURIComponent(name)}/update`, {
       method: "POST",
@@ -2853,7 +2853,7 @@ async function runOneClickUpdate(ids) {
   if (!requireLogin()) return;
   const onlyRunning = !!$("#upd-only-running")?.checked;
   const n = ids ? ids.length : "全部可更新";
-  if (!confirm(`一键安全更新 ${n} 个容器？\n将按管理源执行备份+拉取+重建（需接管才真正 recreate）。`)) return;
+  if (!confirm(`一键安全更新 ${n} 个容器？\n备份+拉取+自动重建（Compose 含 remove-orphans；成功后清理旧镜像/dangling）。\n未开启完整接管时仅拉镜像，不会停/重建容器。`)) return;
   const body = {
     only_available: true,
     only_running: onlyRunning,

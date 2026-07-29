@@ -39,6 +39,15 @@ DockerOps 把更新当成一次可回退的运维动作，而不是“直接覆�
 
 更新前会先备份当前状态，更新过程中记录关键信息，更新失败时可快速回退。
 
+**开启完整接管后的自动更新语义（对齐 Unraid，飞牛/Compose 同样适用）：**
+
+- **Compose / 飞牛**：`compose pull` → `up -d --force-recreate --remove-orphans`（无需先手动停容器）  
+  - 若某服务仍挂在更新前的 image id，会 **stop → remove → up --no-deps** 硬替换兜底  
+  - 成功后清理**被替换的旧镜像 id** + **dangling** 层（默认不做 `prune -a`，避免误删其它未使用镜像）
+- **Unraid**：模板备份 → pull → stop → remove → 按模板 create（dockerman）→ 同样清理旧镜像
+- **三方容器**：仍只备份 + 拉镜像，不自动重建（请 Adopt / 纳入 Compose）
+- **未开启接管**：只 pull，返回 partial；不会停容器、不会删镜像
+
 适合：
 
 - 家用 NAS
@@ -115,7 +124,7 @@ DockerOps 会记录关键运维动作和诊断结果，方便你回头查看：
 
 ### 8. Docker Compose 双方接管
 
-识别 `com.docker.compose.*` 标签与配置的工程目录，按**项目**备份 / 更新：
+识别 `com.docker.compose.*` 标签与配置的工程目录，按**项目**备份 / 更新（含 `--remove-orphans` 与旧镜像清理）：
 
 - 备份 compose 文件 + 服务摘要
 - `docker compose pull` +（接管开启时）`up -d --force-recreate`

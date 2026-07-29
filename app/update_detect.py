@@ -483,16 +483,50 @@ def one_click_update(
             )
             _emit({"event": "item_done", "name": cname, "id": cid, "ok": False, "message": str(e)})
 
+    # After successful recreates, sweep dangling layers left by tag retargets.
+    image_cleanup = None
+    recreated_ok = any(
+        bool(x.get("ok")) and not (x.get("result") or {}).get("partial") for x in results
+    )
+    if recreated_ok:
+        _emit({"event": "stage", "stage": "cleanup_images", "message": "清理更新残留 dangling 镜像…"})
+        try:
+            from docker_client import prune_images
+
+            image_cleanup = prune_images(dangling=True)
+        except Exception as e:
+            image_cleanup = {"ok": False, "error": str(e)}
+
+    partial_n = sum(1 for x in results if (x.get("result") or {}).get("partial"))
     rec = add_ops_record(
         action="one_click_update",
         target=f"{len(results)} containers",
         status="ok" if fail_n == 0 else ("partial" if ok_n else "failed"),
-        detail={"ok": ok_n, "failed": fail_n, "names": [x.get("name") for x in results]},
+        detail={
+            "ok": ok_n,
+            "failed": fail_n,
+            "partial": partial_n,
+            "names": [x.get("name") for x in results],
+            "image_cleanup": image_cleanup,
+        },
         actor=actor,
     )
 
     msg = f"一键更新完成：成功 {ok_n}，失败 {fail_n}"
-    _emit({"event": "done", "ok": fail_n == 0, "updated_ok": ok_n, "updated_failed": fail_n, "message": msg})
+    if partial_n:
+        msg += f"；其中 {partial_n} 个仅拉取未重建（需开启完整接管）"
+    if image_cleanup and image_cleanup.get("space_reclaimed"):
+        msg += f"；已回收 dangling 约 {image_cleanup.get('space_reclaimed')} 字节"
+    _emit(
+        {
+            "event": "done",
+            "ok": fail_n == 0,
+            "updated_ok": ok_n,
+            "updated_failed": fail_n,
+            "partial": partial_n,
+            "message": msg,
+        }
+    )
     return {
         "ok": fail_n == 0,
         "detect": {
@@ -502,7 +536,9 @@ def one_click_update(
         },
         "updated_ok": ok_n,
         "updated_failed": fail_n,
+        "partial_count": partial_n,
         "results": results,
+        "image_cleanup": image_cleanup,
         "record": rec,
         "message": msg,
     }

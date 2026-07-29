@@ -11,14 +11,16 @@ from xml.dom import minidom
 from config import get_settings
 from db import add_ops_record
 from docker_client import (
+    cleanup_superseded_images,
     connect_network,
+    container_image_id,
+    create_and_start,
     get_container,
     list_containers,
     pull_image,
     refresh_template_name_cache,
     remove_container,
     stop_container,
-    create_and_start,
 )
 
 
@@ -310,8 +312,8 @@ def safe_update_unraid(
                 "pull": pull,
                 "backup": backup.get("backup_path"),
                 "next_steps": [
-                    "镜像已拉取。",
-                    "开启接管后可由 DockerOps 按模板重建。",
+                    "镜像已拉取，但未重建容器（完整接管未开启）。",
+                    "开启 DOCKEROPS_TAKEOVER_ENABLED=true 后可由 DockerOps 自动 stop→remove→按模板重建，并清理旧镜像。",
                     "或在 Unraid Docker 页对应用点击 Apply Update。",
                 ],
             },
@@ -323,7 +325,10 @@ def safe_update_unraid(
             "record": rec,
             "backup": backup,
             "pull": pull,
-            "message": "已备份并拉取；接管未开启，未按模板重建（可在 Unraid 原系统 Apply）。",
+            "message": (
+                "已备份并拉取镜像；未重建容器（接管未开启）。"
+                "请开启完整接管后重试，或在 Unraid 原系统 Apply Update。"
+            ),
         }
 
     # Template-driven recreate
@@ -333,15 +338,24 @@ def safe_update_unraid(
     )
     was_running = False
     old = None
+    old_image_id: str | None = None
     try:
         old = get_container(name)
         was_running = (old.get("status") or "").lower() == "running"
+        try:
+            old_image_id = container_image_id(old.get("full_id") or old.get("id") or name)
+        except Exception:
+            old_image_id = None
     except Exception:
         # try by id from list
         for c in list_containers(all_containers=True):
             if (c.get("name") or "").lstrip("/") == name:
                 old = c
                 was_running = (c.get("status") or "").lower() == "running"
+                try:
+                    old_image_id = container_image_id(c.get("id") or name)
+                except Exception:
+                    old_image_id = None
                 break
 
     try:
@@ -365,6 +379,34 @@ def safe_update_unraid(
                     pass
 
         refresh_template_name_cache()
+
+        image_cleanup: dict[str, Any] | None = None
+        if old_image_id:
+            _emit_progress(
+                on_progress,
+                {
+                    "event": "stage",
+                    "stage": "cleanup_images",
+                    "message": "清理被替换的旧镜像 / dangling 层",
+                    "container": name,
+                },
+            )
+            try:
+                keep_ids: list[str] = []
+                try:
+                    new_iid = container_image_id(
+                        created.get("full_id") or created.get("id") or name
+                    )
+                    if new_iid:
+                        keep_ids.append(new_iid)
+                except Exception:
+                    pass
+                image_cleanup = cleanup_superseded_images(
+                    [old_image_id], dangling_prune=True, keep_image_ids=keep_ids
+                )
+            except Exception as e:
+                image_cleanup = {"ok": False, "error": str(e)}
+
         rec = add_ops_record(
             action="unraid_update",
             target=name,
@@ -375,10 +417,14 @@ def safe_update_unraid(
                 "repository": target_image,
                 "recreated": True,
                 "managed_label": "dockerman",
+                "old_image_id": old_image_id,
+                "image_cleanup": image_cleanup,
             },
             actor=actor,
         )
         msg = f"已按 Unraid 模板安全更新并重建 {name}（dockerman，非三方）"
+        if image_cleanup and image_cleanup.get("removed_count"):
+            msg += f"；已清理旧镜像 {image_cleanup.get('removed_count')} 个"
         _emit_progress(on_progress, {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True})
         return {
             "ok": True,
@@ -386,6 +432,8 @@ def safe_update_unraid(
             "backup": backup,
             "pull": pull,
             "container": created,
+            "old_image_id": old_image_id,
+            "image_cleanup": image_cleanup,
             "message": msg,
         }
     except Exception as e:

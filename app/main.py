@@ -119,8 +119,18 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.6.1"
+VERSION = "0.6.2"
 CHANGELOG = [
+    {
+        "version": "0.6.2",
+        "date": "2026-07-29",
+        "items": [
+            "Compose/飞牛更新对齐 Unraid：force-recreate 无需手动停容器，默认 --remove-orphans",
+            "更新成功后自动清理被替换旧镜像与 dangling 层（不做 prune -a）",
+            "Compose 硬替换兜底：若服务仍挂旧 image id，则 stop→remove→up --no-deps",
+            "一键更新结束后 dangling 收尾；partial/三方/飞牛提示更明确",
+        ],
+    },
     {
         "version": "0.6.1",
         "date": "2026-07-27",

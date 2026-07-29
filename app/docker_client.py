@@ -893,6 +893,117 @@ def remove_image(image_id: str, force: bool = False, noprune: bool = False) -> d
     return {"image": image_id, "result": result}
 
 
+def container_image_id(container_id: str) -> str | None:
+    """Return the image id currently used by a container (Engine Image field)."""
+    if not container_id:
+        return None
+    c = get_client()
+    try:
+        cont = c.containers.get(container_id)
+    except NotFound:
+        return None
+    except Exception:
+        return None
+    attrs = cont.attrs or {}
+    iid = attrs.get("Image") or ""
+    if not iid:
+        try:
+            img = getattr(cont, "image", None)
+            if img is not None and getattr(img, "id", None):
+                iid = img.id
+        except Exception:
+            iid = ""
+    return iid or None
+
+
+def resolve_image_id(image_ref: str) -> str | None:
+    """Resolve a name/tag/digest ref to a local image id after pull."""
+    if not image_ref:
+        return None
+    c = get_client()
+    try:
+        img = c.images.get(image_ref)
+        return getattr(img, "id", None) or None
+    except Exception:
+        return None
+
+
+def used_image_ids() -> set[str]:
+    """All image ids currently referenced by any container (including stopped)."""
+    c = get_client()
+    used: set[str] = set()
+    for ct in c.containers.list(all=True):
+        try:
+            img_id = (ct.attrs or {}).get("Image") or ""
+            if img_id:
+                used.add(img_id)
+            img = getattr(ct, "image", None)
+            if img is not None and getattr(img, "id", None):
+                used.add(img.id)
+        except Exception:
+            continue
+    return used
+
+
+def cleanup_superseded_images(
+    old_image_ids: list[str] | set[str] | None,
+    *,
+    dangling_prune: bool = True,
+    keep_image_ids: list[str] | set[str] | None = None,
+) -> dict[str, Any]:
+    """
+    After a successful recreate: remove superseded image ids that no container
+    still references, then optionally prune dangling layers.
+
+    Safe defaults:
+    - never force-remove in-use images
+    - do not run prune -a (tagged unused of other apps stay)
+    """
+    keep = {x for x in (keep_image_ids or []) if x}
+    candidates = []
+    seen: set[str] = set()
+    for raw in old_image_ids or []:
+        iid = (raw or "").strip()
+        if not iid or iid in seen:
+            continue
+        seen.add(iid)
+        candidates.append(iid)
+
+    used = used_image_ids()
+    removed: list[str] = []
+    skipped: list[dict[str, str]] = []
+
+    for iid in candidates:
+        if iid in keep:
+            skipped.append({"image": iid, "reason": "keep"})
+            continue
+        if iid in used:
+            skipped.append({"image": iid, "reason": "in_use"})
+            continue
+        try:
+            remove_image(iid, force=False, noprune=False)
+            removed.append(iid)
+        except Exception as e:
+            # not found / conflict / still referenced mid-flight
+            skipped.append({"image": iid, "reason": str(e)})
+
+    prune_result: dict[str, Any] | None = None
+    if dangling_prune:
+        try:
+            prune_result = prune_images(dangling=True)
+        except Exception as e:
+            prune_result = {"ok": False, "error": str(e), "dangling_only": True}
+
+    return {
+        "ok": True,
+        "removed": removed,
+        "skipped": skipped,
+        "removed_count": len(removed),
+        "dangling_prune": prune_result,
+        "space_reclaimed": int((prune_result or {}).get("space_reclaimed") or 0),
+    }
+
+
 def prune_images(dangling: bool = True) -> dict[str, Any]:
     """
     Prune images via Docker Engine API.

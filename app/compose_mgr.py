@@ -9,7 +9,13 @@ from typing import Any
 
 from config import get_settings
 from db import add_ops_record
-from docker_client import list_containers
+from docker_client import (
+    cleanup_superseded_images,
+    container_image_id,
+    list_containers,
+    remove_container,
+    stop_container,
+)
 
 
 COMPOSE_FILE_NAMES = (
@@ -173,15 +179,132 @@ def _emit_progress(on_progress, payload: dict[str, Any]) -> None:
         pass
 
 
+def _project_service_snapshot(
+    project: dict[str, Any],
+    service: str | None = None,
+) -> list[dict[str, Any]]:
+    """Capture compose service containers + current image ids before pull/recreate."""
+    snap: list[dict[str, Any]] = []
+    for c in project.get("containers") or []:
+        svc = c.get("service") or c.get("name")
+        if service and svc != service and c.get("name") != service:
+            continue
+        cid = c.get("id") or c.get("name")
+        iid = None
+        if cid:
+            try:
+                iid = container_image_id(cid)
+            except Exception:
+                iid = None
+        snap.append(
+            {
+                "id": c.get("id"),
+                "name": c.get("name"),
+                "service": svc,
+                "image": c.get("image"),
+                "image_id": iid,
+                "status": c.get("status"),
+            }
+        )
+    return snap
+
+
+def _hard_replace_stale_services(
+    project: dict[str, Any],
+    pre_snap: list[dict[str, Any]],
+    *,
+    service: str | None = None,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """
+    Unraid-like fallback: if a service container still runs a pre-update image id
+    (or is missing after up), stop → remove → compose up -d --no-deps <service>.
+    """
+    # Refresh project view after up
+    fresh = get_project(project.get("name") or "") or project
+    by_service: dict[str, dict[str, Any]] = {}
+    for c in fresh.get("containers") or []:
+        svc = c.get("service") or c.get("name")
+        if svc:
+            by_service[svc] = c
+
+    hard: list[dict[str, Any]] = []
+    for item in pre_snap:
+        svc = item.get("service")
+        if not svc:
+            continue
+        if service and svc != service:
+            continue
+        old_iid = item.get("image_id")
+        cur = by_service.get(svc)
+        need = False
+        reason = ""
+        if not cur:
+            need = True
+            reason = "missing_after_up"
+        else:
+            cur_iid = None
+            try:
+                cur_iid = container_image_id(cur.get("id") or cur.get("name") or "")
+            except Exception:
+                cur_iid = None
+            # Still on the exact pre-update image id → recreate did not take effect
+            if old_iid and cur_iid and old_iid == cur_iid:
+                need = True
+                reason = "still_on_old_image"
+            elif not cur_iid and old_iid:
+                need = True
+                reason = "image_id_unresolved"
+
+        if not need:
+            continue
+
+        target_id = (cur or item).get("id") or (cur or item).get("name") or svc
+        step: dict[str, Any] = {"service": svc, "reason": reason, "target": target_id}
+        try:
+            try:
+                stop_container(target_id)
+            except Exception as e:
+                step["stop_error"] = str(e)
+            try:
+                remove_container(target_id, force=True)
+            except Exception as e:
+                step["remove_error"] = str(e)
+            up_one = _run_compose(
+                project,
+                ["up", "-d", "--no-deps", "--force-recreate", "--remove-orphans", svc],
+                actor=actor,
+            )
+            step["up"] = up_one
+            step["ok"] = bool(up_one.get("ok"))
+        except Exception as e:
+            step["ok"] = False
+            step["error"] = str(e)
+        hard.append(step)
+
+    ok_all = all(x.get("ok") for x in hard) if hard else True
+    return {"ok": ok_all, "replaced": hard, "count": len(hard)}
+
+
 def safe_update_project(
     name: str,
     actor: str | None = None,
     *,
     service: str | None = None,
     recreate: bool = True,
+    remove_orphans: bool = True,
+    cleanup_images: bool = True,
     on_progress=None,
 ) -> dict[str, Any]:
-    """Backup + compose pull + compose up (takeover required for up/recreate)."""
+    """
+    Backup + compose pull + compose up (takeover required for up/recreate).
+
+    Aligns with Unraid update rules when takeover is on:
+    - force-recreate without requiring a manual stop first
+    - --remove-orphans to drop stale project containers
+    - hard stop→remove→up fallback if a service stays on the old image
+    - cleanup superseded image ids + dangling layers after success
+    """
     settings = get_settings()
     project = get_project(name)
     if not project:
@@ -193,6 +316,9 @@ def safe_update_project(
             actor=actor,
         )
         return {"ok": False, "record": rec, "message": f"未找到 Compose 项目：{name}"}
+
+    pre_snap = _project_service_snapshot(project, service=service)
+    old_image_ids = [x["image_id"] for x in pre_snap if x.get("image_id")]
 
     _emit_progress(on_progress, {"event": "stage", "stage": "backup", "message": f"备份 Compose 项目 {name}", "container": name})
     backup = backup_project(name, actor=actor)
@@ -226,16 +352,20 @@ def safe_update_project(
                 "reason": str(e),
                 "backup": backup.get("backup_path"),
                 "pull": pull,
+                "old_image_ids": old_image_ids,
                 "next_steps": [
-                    "镜像已拉取。",
-                    "开启 DOCKEROPS_TAKEOVER_ENABLED=true 后可由 DockerOps 执行 compose up。",
-                    "或在原系统目录执行 docker compose up -d。",
+                    "镜像已拉取，但未重建容器（完整接管未开启）。",
+                    "开启 DOCKEROPS_TAKEOVER_ENABLED=true 并挂载 rw docker.sock 后重试，DockerOps 将自动 force-recreate / 清理孤立容器与旧镜像。",
+                    "或在飞牛/原系统项目目录执行：docker compose up -d --force-recreate --remove-orphans",
                 ],
             },
             actor=actor,
         )
-        msg = "已备份并拉取镜像；接管未开启，未执行 compose up（原系统仍可接管）。"
-        _emit_progress(on_progress, {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True})
+        msg = (
+            "已备份并拉取镜像；未重建容器（接管未开启）。"
+            "请开启完整接管后重试，或在飞牛侧执行 compose up -d --force-recreate --remove-orphans。"
+        )
+        _emit_progress(on_progress, {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True, "partial": True})
         return {
             "ok": True,
             "partial": True,
@@ -243,16 +373,67 @@ def safe_update_project(
             "backup": backup,
             "pull": pull,
             "message": msg,
+            "old_image_ids": old_image_ids,
         }
 
-    _emit_progress(on_progress, {"event": "stage", "stage": "recreate", "message": f"compose up {name}", "container": name})
+    _emit_progress(
+        on_progress,
+        {
+            "event": "stage",
+            "stage": "recreate",
+            "message": f"compose up {name}（force-recreate / remove-orphans）",
+            "container": name,
+        },
+    )
     up_args = ["up", "-d"]
     if recreate:
         up_args.append("--force-recreate")
+    if remove_orphans:
+        up_args.append("--remove-orphans")
     if service:
         up_args.append(service)
     up = _run_compose(project, up_args, actor=actor)
-    status = "ok" if up.get("ok") else "failed"
+
+    hard = {"ok": True, "replaced": [], "count": 0}
+    if recreate:
+        # Always attempt hard replace for services still on old image (also helps when up partially fails)
+        _emit_progress(
+            on_progress,
+            {
+                "event": "stage",
+                "stage": "hard_replace",
+                "message": f"检查并硬替换未切换镜像的服务 {name}",
+                "container": name,
+            },
+        )
+        hard = _hard_replace_stale_services(
+            project, pre_snap, service=service, actor=actor
+        )
+
+    recreated_ok = bool(up.get("ok")) or (hard.get("count", 0) > 0 and hard.get("ok"))
+    # If initial up failed but hard replace fixed all targeted services, treat as ok
+    if not up.get("ok") and hard.get("count", 0) > 0 and hard.get("ok"):
+        recreated_ok = True
+    if up.get("ok") and hard.get("count", 0) > 0 and not hard.get("ok"):
+        recreated_ok = False
+
+    image_cleanup: dict[str, Any] | None = None
+    if recreated_ok and cleanup_images and old_image_ids:
+        _emit_progress(
+            on_progress,
+            {
+                "event": "stage",
+                "stage": "cleanup_images",
+                "message": "清理被替换的旧镜像 / dangling 层",
+                "container": name,
+            },
+        )
+        try:
+            image_cleanup = cleanup_superseded_images(old_image_ids, dangling_prune=True)
+        except Exception as e:
+            image_cleanup = {"ok": False, "error": str(e)}
+
+    status = "ok" if recreated_ok else "failed"
     rec = add_ops_record(
         action="compose_update",
         target=name,
@@ -262,37 +443,64 @@ def safe_update_project(
             "pull": pull,
             "up": up,
             "service": service,
+            "remove_orphans": remove_orphans,
+            "hard_replace": hard,
+            "old_image_ids": old_image_ids,
+            "image_cleanup": image_cleanup,
         },
         actor=actor,
     )
-    msg = f"Compose 项目 {name} 安全更新完成" if up.get("ok") else f"compose up 失败：{up.get('stderr')}"
+    if recreated_ok:
+        parts = [f"Compose 项目 {name} 安全更新完成"]
+        if remove_orphans:
+            parts.append("已 remove-orphans")
+        if hard.get("count"):
+            parts.append(f"硬替换 {hard.get('count')} 个服务")
+        if image_cleanup and image_cleanup.get("removed_count"):
+            parts.append(f"清理旧镜像 {image_cleanup.get('removed_count')} 个")
+        msg = "；".join(parts)
+    else:
+        err = up.get("stderr") or (hard.get("replaced") and "硬替换失败") or "compose up 失败"
+        msg = f"compose up 失败：{err}"
     _emit_progress(
         on_progress,
         {
             "event": "stage",
-            "stage": "done" if up.get("ok") else "error",
+            "stage": "done" if recreated_ok else "error",
             "message": msg,
             "container": name,
-            "ok": bool(up.get("ok")),
+            "ok": recreated_ok,
         },
     )
     return {
-        "ok": bool(up.get("ok")),
+        "ok": recreated_ok,
         "record": rec,
         "backup": backup,
         "pull": pull,
         "up": up,
+        "hard_replace": hard,
+        "orphans_removed": bool(remove_orphans),
+        "old_image_ids": old_image_ids,
+        "image_cleanup": image_cleanup,
         "message": msg,
     }
 
 
-def project_up(name: str, actor: str | None = None, service: str | None = None) -> dict[str, Any]:
+def project_up(
+    name: str,
+    actor: str | None = None,
+    service: str | None = None,
+    *,
+    remove_orphans: bool = True,
+) -> dict[str, Any]:
     settings = get_settings()
     settings.takeover_guard()
     project = get_project(name)
     if not project:
         return {"ok": False, "message": f"未找到项目 {name}"}
     args = ["up", "-d"]
+    if remove_orphans:
+        args.append("--remove-orphans")
     if service:
         args.append(service)
     result = _run_compose(project, args, actor=actor)
@@ -300,10 +508,15 @@ def project_up(name: str, actor: str | None = None, service: str | None = None) 
         action="compose_up",
         target=name,
         status="ok" if result.get("ok") else "failed",
-        detail=result,
+        detail={**result, "remove_orphans": remove_orphans},
         actor=actor,
     )
-    return {"ok": result.get("ok"), "record": rec, "result": result, "message": "compose up 完成" if result.get("ok") else result.get("stderr")}
+    return {
+        "ok": result.get("ok"),
+        "record": rec,
+        "result": result,
+        "message": "compose up 完成" if result.get("ok") else result.get("stderr"),
+    }
 
 
 def project_down(name: str, actor: str | None = None) -> dict[str, Any]:
