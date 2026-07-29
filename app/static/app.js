@@ -2892,8 +2892,6 @@ function applyRemoteSettingsUI(data) {
   if (mode) mode.value = st.agent_mode || "collab";
   const pub = $("#remote-public-url");
   if (pub) pub.value = st.public_base_url || "";
-  const curl = $("#remote-controller-url");
-  if (curl && st.controller_base_url) curl.value = st.controller_base_url;
 
   const show = !!st.enabled;
   const isCtrl = st.role === "controller";
@@ -2903,39 +2901,98 @@ function applyRemoteSettingsUI(data) {
   if (ctrlPanel) ctrlPanel.hidden = !(show && isCtrl);
   if (agentPanel) agentPanel.hidden = !(show && isAgent);
 
-  const locked = !!(status.managed_locked || (isAgent && st.status === "managed_lock"));
+  const phase = st.ui_phase || status.ui_phase || "setup";
+  const peer = st.active_peer_name || status.active_peer_name || "—";
+  const locked = !!(
+    status.managed_locked ||
+    (isAgent && (phase === "managed_full" || st.status === "managed_lock"))
+  );
+  const collabOn = !!(
+    isAgent &&
+    !locked &&
+    (phase === "collab_banner" ||
+      (st.status === "connected" && (st.agent_mode || "collab") !== "managed"))
+  );
   state.managedLocked = locked;
-  applyManagedLockUI(locked, status, st, runtime);
+  applyManagedLockUI(locked, collabOn, status, st, runtime, peer);
+
+  // agent sub-panels: setup/waiting vs connected
+  if (isAgent) {
+    const setup = $("#remote-agent-setup");
+    const conn = $("#remote-agent-connected");
+    const applyBtn = $("#btn-remote-apply-mode");
+    const waiting = phase === "waiting" || st.status === "waiting_pair";
+    const connectedPhase =
+      phase === "collab_banner" ||
+      phase === "managed_full" ||
+      st.status === "connected" ||
+      st.status === "managed_lock";
+    if (phase === "mode_pick" || phase === "setup" || waiting || !connectedPhase) {
+      if (setup) setup.hidden = false;
+      if (conn) conn.hidden = true;
+      if (applyBtn) applyBtn.hidden = phase !== "mode_pick";
+    } else {
+      if (setup) setup.hidden = true;
+      if (conn) conn.hidden = false;
+      if (applyBtn) applyBtn.hidden = true;
+      const ct = $("#remote-agent-connected-text");
+      if (ct) {
+        ct.textContent =
+          locked || phase === "managed_full"
+            ? `当前由远程设备「${peer}」完全管理`
+            : `远程设备「${peer}」正在协同管理`;
+      }
+    }
+    if (waiting) {
+      const box = $("#remote-pair-box");
+      if (box && ($("#remote-pair-code")?.textContent || "").trim() && ($("#remote-pair-code")?.textContent || "") !== "—") {
+        box.hidden = false;
+      }
+    }
+  }
 
   const hint = $("#remote-banner-hint");
   if (hint) {
     hint.textContent =
       status.hint ||
       (!st.enabled
-        ? "远程模式关闭。开启后可选主控或被控（哪吒同款拨出，不开 Docker 端口）。"
+        ? "远程模式关闭。开启后可选主控（粘贴凭证）或被控（生成凭证）。"
         : isCtrl
-          ? `主控端 · 状态 ${st.status || "idle"}`
+          ? `主控端 · 已连接远程 ${status.online_count ?? 0} 台`
           : isAgent
-            ? `被控端 · ${runtime.connected ? "已连接" : "未连接"}`
+            ? status.hint || `被控端 · ${phase}`
             : "请选择本机角色：主控端或被控端");
   }
   const agSt = $("#remote-agent-status");
   if (agSt && isAgent) {
-    if (locked) agSt.textContent = `托管锁定 · 主控 ${st.active_peer_name || "—"}`;
-    else if (runtime.connected) agSt.textContent = `协同已连接 · ${st.active_peer_name || "主控"}`;
-    else if (runtime.running) agSt.textContent = "正在连接…";
-    else agSt.textContent = runtime.last_error || "未连接";
+    if (locked) agSt.textContent = `托管中 · ${peer}`;
+    else if (collabOn) agSt.textContent = `协同中 · ${peer}`;
+    else if (phase === "waiting" || st.status === "waiting_pair") agSt.textContent = "等待主控连接…";
+    else if (phase === "mode_pick") agSt.textContent = "请重新选择模式";
+    else agSt.textContent = "未连接";
+  }
+  const cSt = $("#remote-controller-status");
+  if (cSt && isCtrl) {
+    if (runtime.connecting) cSt.textContent = "连接中…";
+    else if (runtime.last_error) cSt.textContent = runtime.last_error;
+    else cSt.textContent = runtime.online_count
+      ? `在线 ${runtime.online_count}`
+      : "";
   }
   renderRemoteSessions(status.sessions || data?.status?.sessions || []);
   ensureRemotePolling(show && (isCtrl || isAgent));
 }
 
-function applyManagedLockUI(locked, status, st, runtime) {
+function applyManagedLockUI(locked, collabOn, status, st, runtime, peer) {
   const banner = $("#remote-lock-banner");
+  const collab = $("#remote-collab-banner");
   const badge = $("#remote-badge");
   const text = $("#remote-lock-text");
+  const title = $("#remote-lock-title");
   if (banner) banner.hidden = !locked;
+  if (collab) collab.hidden = !collabOn || locked;
   document.body.classList.toggle("remote-managed-lock", !!locked);
+  document.body.classList.toggle("remote-collab-on", !!collabOn && !locked);
   if (badge) {
     const role = st?.role || status?.role || "";
     const enabled = !!(st?.enabled || status?.enabled);
@@ -2944,15 +3001,19 @@ function applyManagedLockUI(locked, status, st, runtime) {
     } else {
       badge.hidden = false;
       if (locked) {
-        badge.textContent = "托管锁定";
+        badge.textContent = "托管中";
         badge.className = "badge bad";
+      } else if (collabOn) {
+        badge.textContent = "协同中";
+        badge.className = "badge ok";
       } else if (role === "controller") {
-        const on = status?.online_count ?? 0;
+        const on = status?.online_count ?? runtime?.online_count ?? 0;
         badge.textContent = on > 0 ? `主控 · 在线${on}` : "主控";
         badge.className = "badge ok";
       } else if (role === "agent") {
-        badge.textContent = runtime?.connected ? "被控 · 已连" : "被控";
-        badge.className = runtime?.connected ? "badge ok" : "badge warn";
+        const waiting = (st?.ui_phase || status?.ui_phase) === "waiting";
+        badge.textContent = waiting ? "被控 · 等待" : "被控";
+        badge.className = waiting ? "badge warn" : "badge";
       } else {
         badge.textContent = "远程";
         badge.className = "badge";
@@ -2960,7 +3021,12 @@ function applyManagedLockUI(locked, status, st, runtime) {
     }
   }
   if (text && locked) {
-    text.textContent = `主控「${st?.active_peer_name || status?.active_peer_name || "—"}」托管本机；启停/更新/删除等请在主控操作，或请主控改为协同 / 断开。`;
+    text.textContent = `当前由远程设备「${peer || "—"}」完全管理。可点「切换模式」回到设置重选协同/托管，或断开远程。`;
+  }
+  if (title && locked) title.textContent = "远程托管";
+  const ctext = $("#remote-collab-text");
+  if (ctext && collabOn) {
+    ctext.textContent = `远程设备「${peer || "—"}」正在协同管理；本地功能仍可使用。`;
   }
 }
 
@@ -3080,7 +3146,6 @@ async function saveRemoteSettings() {
     agent_mode: $("#remote-agent-mode")?.value || "collab",
     display_name: ($("#remote-display-name")?.value || "").trim(),
     public_base_url: ($("#remote-public-url")?.value || "").trim(),
-    controller_base_url: ($("#remote-controller-url")?.value || "").trim(),
   };
   const stEl = $("#remote-settings-status");
   try {
@@ -3096,11 +3161,29 @@ async function saveRemoteSettings() {
 
 async function createRemotePair() {
   if (!requireLogin()) return;
+  const public_base_url = ($("#remote-public-url")?.value || "").trim();
+  if (!public_base_url) {
+    alert("请填写本机公网域名或 IP（主控需能访问）");
+    return;
+  }
   try {
+    // persist mode + url first
+    await api("/api/remote/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        enabled: true,
+        role: "agent",
+        agent_mode: $("#remote-agent-mode")?.value || "collab",
+        display_name: ($("#remote-display-name")?.value || "").trim() || "被控",
+        public_base_url,
+      }),
+    });
     const r = await api("/api/remote/pair", {
       method: "POST",
       body: JSON.stringify({
-        controller_name: ($("#remote-display-name")?.value || "").trim() || "主控",
+        public_base_url,
+        mode: $("#remote-agent-mode")?.value || "collab",
+        agent_name: ($("#remote-display-name")?.value || "").trim() || "被控",
       }),
     });
     const box = $("#remote-pair-box");
@@ -3108,12 +3191,12 @@ async function createRemotePair() {
     const codeEl = $("#remote-pair-code");
     if (codeEl) codeEl.textContent = r.pair_code || "";
     const msg = $("#remote-pair-msg");
-    if (msg) msg.textContent = r.message || "";
+    if (msg) msg.textContent = r.message || "等待主控连接…";
     let left = Number(r.expires_in || 60);
     const ttl = $("#remote-pair-ttl");
     if (state.remotePairTimer) clearInterval(state.remotePairTimer);
     const tick = () => {
-      if (ttl) ttl.textContent = left > 0 ? `${left}s` : "已过期";
+      if (ttl) ttl.textContent = left > 0 ? `${left}s` : "已过期，请重新生成";
       if (left <= 0) {
         clearInterval(state.remotePairTimer);
         state.remotePairTimer = null;
@@ -3123,7 +3206,6 @@ async function createRemotePair() {
     };
     tick();
     state.remotePairTimer = setInterval(tick, 1000);
-    // poll pair status + endpoints while waiting
     const codeId = r.code_id;
     const poll = setInterval(async () => {
       try {
@@ -3131,9 +3213,11 @@ async function createRemotePair() {
         if (ps.status === "used") {
           clearInterval(poll);
           await loadRemoteSettings();
-          await loadEndpoints();
         }
-        if (ps.status === "expired" || left <= 0) clearInterval(poll);
+        if (ps.status === "expired" || left <= 0) {
+          clearInterval(poll);
+          if (msg && ps.status === "expired") msg.textContent = "凭证已过期，请重新生成";
+        }
       } catch (_) {
         clearInterval(poll);
       }
@@ -3143,34 +3227,28 @@ async function createRemotePair() {
   }
 }
 
-async function connectRemoteAgent() {
+/** 主控：粘贴被控凭证并连接 */
+async function connectRemoteController() {
   if (!requireLogin()) return;
-  const controller_base_url = ($("#remote-controller-url")?.value || "").trim();
   const pair_code = ($("#remote-pair-input")?.value || "").trim();
-  if (!controller_base_url || !pair_code) {
-    alert("请填写主控地址与配对凭证");
+  if (!pair_code) {
+    alert("请粘贴被控生成的连接凭证");
     return;
   }
-  const stEl = $("#remote-agent-status");
+  const stEl = $("#remote-controller-status");
   try {
     if (stEl) stEl.textContent = "连接中…";
-    const r = await api("/api/remote/agent/connect", {
+    const r = await api("/api/remote/controller/connect", {
       method: "POST",
       body: JSON.stringify({
-        controller_base_url,
         pair_code,
-        agent_name: ($("#remote-display-name")?.value || "").trim() || "被控",
-        mode: $("#remote-agent-mode")?.value || "collab",
+        controller_name: ($("#remote-display-name")?.value || "").trim() || "主控",
       }),
     });
-    if (stEl) stEl.textContent = r.message || "连接中…";
-    // poll runtime a few times
-    let n = 0;
-    const t = setInterval(async () => {
-      n += 1;
-      await loadRemoteSettings();
-      if (state.remote?.runtime?.connected || n > 15) clearInterval(t);
-    }, 1500);
+    if (stEl) stEl.textContent = r.message || "已连接";
+    alert(r.message || "已连接被控");
+    await loadRemoteSettings();
+    await loadEndpoints();
   } catch (e) {
     if (stEl) stEl.textContent = e.message || "连接失败";
     alert(e.message || String(e));
@@ -3181,6 +3259,23 @@ async function disconnectRemoteAgent() {
   if (!requireLogin()) return;
   try {
     await api("/api/remote/agent/disconnect", { method: "POST", body: "{}" });
+    const box = $("#remote-pair-box");
+    if (box) box.hidden = true;
+    await loadRemoteSettings();
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function switchRemoteAgentMode(mode) {
+  if (!requireLogin()) return;
+  try {
+    const r = await api("/api/remote/agent/switch-mode", {
+      method: "POST",
+      body: JSON.stringify({ mode: mode || "mode_pick" }),
+    });
+    if (r.message && mode && mode !== "mode_pick") alert(r.message);
+    applyRemoteSettingsUI(r);
     await loadRemoteSettings();
   } catch (e) {
     alert(e.message || String(e));
@@ -3190,7 +3285,7 @@ async function disconnectRemoteAgent() {
 async function disconnectRemoteSession(sessionId) {
   if (!requireLogin()) return;
   if (!sessionId) return;
-  if (!confirm("断开该远程节点？被控需重新配对。")) return;
+  if (!confirm("断开该远程节点？之后需被控重新生成凭证并在主控粘贴。")) return;
   try {
     await api(`/api/remote/sessions/${encodeURIComponent(sessionId)}/disconnect`, {
       method: "POST",
@@ -3491,18 +3586,27 @@ $("#btn-remote-copy-pair")?.addEventListener("click", async () => {
   try {
     await navigator.clipboard.writeText(code);
     const msg = $("#remote-pair-msg");
-    if (msg) msg.textContent = "凭证已复制到剪贴板";
+    if (msg) msg.textContent = "连接凭证已复制，请在主控端粘贴";
   } catch (_) {
-    prompt("复制以下凭证：", code);
+    prompt("复制以下连接凭证：", code);
   }
 });
 $("#btn-remote-refresh-sessions")?.addEventListener("click", async () => {
   await loadRemoteSettings();
   await loadEndpoints();
 });
-$("#btn-remote-connect")?.addEventListener("click", () => connectRemoteAgent());
+$("#btn-remote-connect")?.addEventListener("click", () => connectRemoteController());
 $("#btn-remote-disconnect")?.addEventListener("click", () => disconnectRemoteAgent());
+$("#btn-remote-agent-disconnect2")?.addEventListener("click", () => disconnectRemoteAgent());
 $("#btn-remote-lock-disconnect")?.addEventListener("click", () => disconnectRemoteAgent());
+$("#btn-remote-collab-disconnect")?.addEventListener("click", () => disconnectRemoteAgent());
+$("#btn-remote-switch-mode")?.addEventListener("click", () => switchRemoteAgentMode("mode_pick"));
+$("#btn-remote-collab-switch")?.addEventListener("click", () => switchRemoteAgentMode("mode_pick"));
+$("#btn-remote-agent-switch-mode")?.addEventListener("click", () => switchRemoteAgentMode("mode_pick"));
+$("#btn-remote-apply-mode")?.addEventListener("click", () => {
+  const m = $("#remote-agent-mode")?.value || "collab";
+  switchRemoteAgentMode(m);
+});
 $("#btn-remote-goto-settings")?.addEventListener("click", () => {
   const btn = document.querySelector('.nav-item[data-tab="settings"]');
   if (btn) btn.click();

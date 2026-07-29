@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <Container version="2">
   <Name>DockerOps</Name>
-  <Repository>ghcr.io/deltrivx/dockerops:0.7.1</Repository>
+  <Repository>ghcr.io/deltrivx/dockerops:0.8.0</Repository>
   <Registry>https://ghcr.io</Registry>
   <Network>bridge</Network>
   <MyIP/>
@@ -9,7 +9,7 @@
   <Privileged>false</Privileged>
   <Support>https://github.com/deltrivx/DockerOps</Support>
   <Project>https://github.com/deltrivx/DockerOps</Project>
-  <Overview>DockerOps v0.7.1 — 远程托管锁定 + 协同切换；哪吒同款拨出；60 秒配对。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
+  <Overview>DockerOps v0.8.0 — 远程模式：被控生成凭证、主控粘贴连接；协同/托管全屏；60 秒配对。无默认账号；SQLite 存账号。按本模板创建保持 dockerman。镜像仅 GitHub Actions 远程构建。</Overview>
   <Category>Tools:System:Utilities</Category>
   <WebUI>http://[IP]:[PORT:8080]/</WebUI>
   <TemplateURL/>

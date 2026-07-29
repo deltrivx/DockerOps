@@ -1353,6 +1353,16 @@ body.auth-locked .shell {
 .remote-lock-banner[hidden] {
   display: none !important;
 }
+.remote-collab-banner {
+  margin: 0;
+  padding: 0.45rem 1rem;
+  border-bottom: 1px solid rgba(0, 243, 255, 0.28);
+  background: linear-gradient(90deg, rgba(0, 243, 255, 0.12), rgba(108, 92, 231, 0.08));
+  color: var(--text);
+}
+.remote-collab-banner[hidden] {
+  display: none !important;
+}
 .remote-lock-inner {
   display: flex;
   flex-wrap: wrap;
@@ -1364,9 +1374,21 @@ body.auth-locked .shell {
   color: #fca5a5;
   letter-spacing: 0.02em;
 }
-.remote-lock-inner #remote-lock-text {
+.remote-collab-banner .remote-lock-inner strong {
+  color: var(--cyan);
+}
+.remote-lock-inner #remote-lock-text,
+.remote-lock-inner #remote-collab-text {
   flex: 1 1 14rem;
   color: var(--muted);
+}
+.remote-connected-msg {
+  margin: 0.5rem 0 0;
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: rgba(108, 92, 231, 0.08);
+  font-size: 0.95rem;
 }
 body.remote-managed-lock .nav-item[data-tab="containers"],
 body.remote-managed-lock .nav-item[data-tab="images"],

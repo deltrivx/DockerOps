@@ -290,15 +290,18 @@ docker compose --profile takeover up -d
 | 启停 / 重启 / 暂停 / 拉镜像 | 登录 |
 | 删除 / prune / 建删网络卷 / compose up-down / 模板重建 / Adopt | 登录 + `TAKEOVER=true` |
 
-### 远程模式（v0.7 · 哪吒同款拨出，推荐）
+### 远程模式（v0.8 · 被控发码 / 主控连接）
 
-**不需要**开放 Docker Engine 端口（2375/2376）。两台 NAS 各装 DockerOps：
+**不需要**开放 Docker Engine 端口（2375/2376）。两台 NAS 各装 DockerOps（**双方需 ≥0.8**，不兼容 0.7 旧凭证）：
 
-1. **主控端**（例如 Unraid）：系统设置 → 远程模式 → 开启 → 角色选「主控端」→ 保存 → **生成 60 秒凭证**  
-2. **被控端**（例如飞牛）：远程模式 → 开启 → 角色选「被控端」→ 填写主控 DockerOps 的 **域名或 IP**（能打开网页的那个，如 `http://192.168.31.2:9080`）→ 粘贴凭证 → **连接主控**  
-3. 被控 **主动拨出** WebSocket 到主控；主控顶栏端点出现「远程 · 节点」，切换后容器/镜像/更新检测经 RPC 代理到被控  
+1. **被控端**（例如飞牛）：系统设置 → 远程模式 → 开启 → 角色选「被控端」→ 选 **协同** 或 **托管** → 填写**本机**公网域名或 IP（主控须能打开该 DockerOps 网页）→ **生成专属凭证**（60 秒）→ 复制给主控  
+2. **主控端**（例如 Unraid）：远程模式 → 开启 → 角色选「主控端」→ **粘贴连接凭证** → 连接远程设备（本机原功能不受影响）  
+3. 主控 **主动连接**被控 WebSocket；顶栏出现「远程 · 节点」，切换后容器/镜像/更新检测经 RPC 代理到被控  
 
-支持 **协同**（双方可操作）与 **托管锁定**（被控本地写操作 API 返回 423，主控 RPC 仍可管理；主控可随时「改协同 / 改托管」）。
+- **协同**：被控提示「远程设备正在协同管理」，本地仍可操作  
+- **托管**：被控全屏「由远程设备完全管理」，本地写操作 API 返回 423；被控可点 **切换模式** 回到设置重选  
+
+前提：主控网络能访问被控填的地址（同局域网、端口映射或反代）。
 
 ### 远程 Docker Engine 端点（可选，域名 + API）
 
@@ -351,9 +354,10 @@ DockerOps 仍可通过 **系统设置 → Docker 端点** 直连引擎。`docker
 | `GET\|POST` | `/api/compose/projects...` | Compose 项目 |
 | `GET\|POST` | `/api/unraid/templates...` · `/api/unraid/adopt/{id}` | Unraid 模板 |
 | `GET\|PUT` | `/api/remote/settings` · `/api/remote/status` | 远程模式设置 / 状态 |
-| `POST\|GET` | `/api/remote/pair` | 主控生成/查询 60s 配对凭证 |
-| `POST` | `/api/remote/agent/connect` · `disconnect` | 被控拨出连接 / 断开 |
-| `WS` | `/api/remote/agent/ws` | 主控 hub（被控拨入） |
+| `POST\|GET` | `/api/remote/pair` | **被控**生成/查询 60s 连接凭证 |
+| `POST` | `/api/remote/controller/connect` · `disconnect` | **主控**粘贴凭证连接 / 断开 |
+| `POST` | `/api/remote/agent/disconnect` · `switch-mode` | 被控断开 / 切换协同·托管 |
+| `WS` | `/api/remote/hub` | 被控 hub（主控拨入；兼容旧路径 `/api/remote/agent/ws`） |
 
 完整列表见 Swagger：`/docs`。
 
