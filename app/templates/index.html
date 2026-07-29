@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.6.4') }}" />
-  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.6.4') }}" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.6.5') }}" />
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.6.5') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -27,9 +27,6 @@
         </button>
         <button type="button" class="nav-item" data-tab="containers">
           <span class="nav-ico">▣</span> 容器
-        </button>
-        <button type="button" class="nav-item" data-tab="updates">
-          <span class="nav-ico">↻</span> 更新检测
         </button>
         <button type="button" class="nav-item" data-tab="compose">
           <span class="nav-ico">⧉</span> Compose
@@ -57,7 +54,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.6.4 · —
+        v0.6.5 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -100,7 +97,7 @@
             <div class="stat-chip"><span class="stat-val" id="stat-total">-</span><span class="stat-key">容器</span></div>
             <div class="stat-chip"><span class="stat-val" id="stat-unhealthy">-</span><span class="stat-key">异常</span></div>
             <div class="stat-chip"><span class="stat-val" id="stat-images">-</span><span class="stat-key">镜像</span></div>
-            <div class="stat-chip clickable" id="stat-updates-chip" title="查看可更新容器">
+            <div class="stat-chip clickable" id="stat-updates-chip" title="打开容器页并筛选可更新">
               <span class="stat-val" id="stat-updates">-</span><span class="stat-key">可更新</span>
             </div>
           </div>
@@ -214,12 +211,14 @@
           </div>
         </section>
 
-        <!-- Containers -->
+        <!-- Containers (+ update detect) -->
         <section class="card wide tab-panel" data-panel="containers" hidden>
           <div class="row-between wrap">
             <div>
               <h2>容器</h2>
               <span id="container-count" class="muted"></span>
+              <div id="update-summary" class="muted small mt">更新检测：加载缓存中…</div>
+              <div id="update-auto-hint" class="muted small">后台自动检测开启后，列表直接显示「有更新」徽标。</div>
             </div>
             <div class="toolbar">
               <input type="search" id="container-filter" class="input" placeholder="搜索名称 / 镜像 / 管理源…" />
@@ -236,7 +235,20 @@
                 <option value="compose">Compose</option>
                 <option value="third_party">三方</option>
               </select>
+              <select id="container-update-filter" class="input select" title="按更新状态筛选">
+                <option value="">全部更新状态</option>
+                <option value="available">仅可更新</option>
+                <option value="latest">仅最新</option>
+              </select>
             </div>
+          </div>
+          <div class="update-bar row-between wrap">
+            <div class="toolbar">
+              <label class="chk"><input type="checkbox" id="upd-only-running" checked /> 检测仅运行中</label>
+              <button type="button" class="btn primary small" id="btn-detect-updates">立即检测更新</button>
+              <button type="button" class="btn small" id="btn-one-click-update">一键更新可更新项</button>
+            </div>
+            <div id="update-progress" class="muted small" hidden></div>
           </div>
           <div class="batch-bar" id="batch-bar">
             <div class="batch-meta">
@@ -255,13 +267,14 @@
             <table class="containers-table data-table">
               <colgroup>
                 <col style="width:2.5%" />
-                <col style="width:16%" />
-                <col style="width:8%" />
-                <col style="width:28%" />
-                <col style="width:8%" />
+                <col style="width:15%" />
                 <col style="width:7%" />
-                <col style="width:4.5%" />
-                <col style="width:26%" />
+                <col style="width:24%" />
+                <col style="width:7%" />
+                <col style="width:7%" />
+                <col style="width:8%" />
+                <col style="width:4%" />
+                <col style="width:25.5%" />
               </colgroup>
               <thead>
                 <tr>
@@ -271,56 +284,13 @@
                   <th class="cell-text">镜像</th>
                   <th class="col-status">状态</th>
                   <th class="col-health">健康</th>
+                  <th class="col-detect">更新</th>
                   <th class="col-num">重启</th>
                   <th class="col-actions">操作</th>
                 </tr>
               </thead>
               <tbody id="container-rows">
-                <tr><td colspan="8" class="muted">加载中…</td></tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-
-        <!-- Updates -->
-        <section class="card wide tab-panel" data-panel="updates" hidden>
-          <div class="row-between wrap">
-            <div>
-              <h2>容器更新</h2>
-              <span id="update-summary" class="muted">加载缓存中…</span>
-              <div id="update-auto-hint" class="muted small mt">后台自动检测开启后，列表会像 Unraid 一样直接显示可更新状态。</div>
-            </div>
-            <div class="toolbar">
-              <label class="chk"><input type="checkbox" id="upd-only-running" checked /> 仅运行中</label>
-              <button type="button" class="btn primary" id="btn-detect-updates">立即检测</button>
-              <button type="button" class="btn" id="btn-one-click-update">一键更新可更新项</button>
-            </div>
-          </div>
-          <div id="update-progress" class="muted small" hidden></div>
-          <div class="table-wrap">
-            <table class="data-table updates-table">
-              <colgroup>
-                <col style="width:2.5%" />
-                <col style="width:16%" />
-                <col style="width:8%" />
-                <col style="width:28%" />
-                <col style="width:8%" />
-                <col style="width:9%" />
-                <col style="width:28.5%" />
-              </colgroup>
-              <thead>
-                <tr>
-                  <th class="col-check"><input type="checkbox" id="upd-check-all" title="全选可更新" /></th>
-                  <th class="cell-text">容器</th>
-                  <th class="col-mgr">管理源</th>
-                  <th class="cell-text">镜像</th>
-                  <th class="col-status">状态</th>
-                  <th class="col-detect">检测结果</th>
-                  <th class="col-actions">操作</th>
-                </tr>
-              </thead>
-              <tbody id="update-rows">
-                <tr><td colspan="7" class="muted">等待状态缓存或点击「立即检测」</td></tr>
+                <tr><td colspan="9" class="muted">加载中…</td></tr>
               </tbody>
             </table>
           </div>
@@ -549,7 +519,7 @@
           <div class="docs-grid">
             <article class="doc-card">
               <h3>日常运维</h3>
-              <p>容器启停、日志、镜像/网络/卷、系统清理与更新检测均可在本控制台完成，无需再开 Portainer 做日常操作。</p>
+              <p>容器启停、日志、镜像/网络/卷、系统清理均可在本控制台完成。镜像更新检测已并入「容器」页（徽标 + 立即检测 / 一键更新）。</p>
             </article>
             <article class="doc-card">
               <h3>管理源分流</h3>
@@ -562,6 +532,12 @@
             <article class="doc-card">
               <h3>飞牛 / Unraid</h3>
               <p>飞牛为引擎级 Compose 接管；Unraid 推荐用模板安装 DockerOps 自身。镜像仅通过 GitHub Actions 远程构建发布到 GHCR。</p>
+            </article>
+            <article class="doc-card">
+              <h3>远程 Docker（域名 + API）</h3>
+              <p>在远程主机用反向代理把 Docker Engine API（通常 unix sock → HTTPS）暴露为域名，再在「系统设置 → Docker 端点」添加
+                <code>tcp://docker.example.com:443</code> 并勾选 TLS（按需上传客户端证书或关闭校验仅限受信内网）。
+                切勿对公网裸开 <code>:2375</code> 无认证 API。</p>
             </article>
           </div>
           <div class="card-head mt">
@@ -587,7 +563,15 @@
             <p class="muted small">
               默认本机 <code>unix:///var/run/docker.sock</code>。可添加远程
               <code>tcp://host:2375</code>（明文）或 <code>tcp://host:2376</code> + TLS。
+              域名场景推荐：反向代理暴露 Docker API 后使用
+              <code>tcp://docker.example.com:443</code> + TLS（详见「说明日志」）。
               活动端点决定容器/镜像等资源视图；Compose 与 Unraid 模板仅本地 unix 端点可用。
+            </p>
+            <p class="muted small">
+              Host 示例：
+              <code>tcp://192.168.31.5:2376</code> ·
+              <code>tcp://docker.example.com:443</code> ·
+              <code>ssh://user@host</code>（需本机 ssh 可用）
             </p>
             <div class="table-wrap">
               <table class="data-table endpoints-table">
@@ -725,7 +709,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.6.4</span> ·
+        DockerOps <span id="foot-version">v0.6.5</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -844,9 +828,9 @@
     <div id="image-detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.6.4') }}"></script>
-  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.6.4') }}"></script>
-  <script src="/static/particles.js?v={{ asset_v|default('0.6.4') }}"></script>
-  <script src="/static/app.js?v={{ asset_v|default('0.6.4') }}"></script>
+  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.6.5') }}"></script>
+  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.6.5') }}"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.6.5') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.6.5') }}"></script>
 </body>
 </html>

@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.6.4",
+  version: "0.6.5",
   tab: "overview",
   endpoints: [],
   endpointId: localStorage.getItem("dockerops_endpoint") || "",
@@ -65,8 +65,7 @@ const PLATFORM_LABEL = {
 
 const TAB_TITLES = {
   overview: ["总览", "平台 · 引擎 · 健康 · 活动容器"],
-  containers: ["容器", "生命周期 · 终端 · 日志 · 安全更新"],
-  updates: ["容器更新", "自动检测 · 列表徽标 · 一键安全升级"],
+  containers: ["容器", "生命周期 · 更新检测 · 终端 · 日志 · 安全更新"],
   compose: ["Compose", "项目发现 · 双方接管"],
   unraid: ["Unraid", "dockerMan 模板 · 非三方更新"],
   images: ["镜像", "标签 · 占用 · 拉取 · 清理"],
@@ -86,12 +85,14 @@ const TAB_STORAGE_KEY = "dockerops_tab";
 function readSavedTab() {
   try {
     const hash = (location.hash || "").replace(/^#\/?/, "").trim();
+    if (hash === "updates") return "containers";
     if (hash && TAB_KEYS.includes(hash)) return hash;
   } catch (_) {
     /* ignore */
   }
   try {
     const saved = localStorage.getItem(TAB_STORAGE_KEY) || "";
+    if (saved === "updates") return "containers";
     if (saved && TAB_KEYS.includes(saved)) return saved;
   } catch (_) {
     /* ignore */
@@ -823,6 +824,8 @@ function updateComposeNavVisibility() {
 }
 
 function switchTab(name, opts = {}) {
+  // updates tab merged into containers
+  if (name === "updates") name = "containers";
   // guard: cannot open compose when hidden
   if (name === "compose" && !(state.compose && state.compose.length)) {
     name = "overview";
@@ -850,12 +853,9 @@ function switchTab(name, opts = {}) {
     applyPrefsLocal(state.prefs);
     loadSystemSettings();
   }
-  if (name === "updates") {
-    // hydrate from cache if empty
+  if (name === "containers") {
     if (!(state.updateItems && state.updateItems.length) && state.updateStatus) {
       applyUpdateStatus(state.updateStatus);
-    } else {
-      renderUpdates();
     }
   }
   setSidebarOpen(false);
@@ -918,7 +918,6 @@ function applyUpdateStatus(data) {
       ? `后台每 ${hours} 小时自动比对 registry digest；容器列表直接显示「有更新」。`
       : "后台自动检测已关闭；可在系统设置开启，或手动「立即检测」。";
   }
-  if (state.tab === "updates") renderUpdates();
   if (state.tab === "containers" || state.tab === "overview") renderContainers();
 }
 
@@ -982,16 +981,25 @@ function renderContainers() {
   const q = ($("#container-filter")?.value || "").trim();
   const stf = ($("#container-status-filter")?.value || "").trim();
   const mgr = ($("#container-mgr-filter")?.value || "").trim();
+  const updf = ($("#container-update-filter")?.value || "").trim();
   let items = state.containers || [];
   items = items.filter((c) => {
     if (stf && (c.status || "").toLowerCase() !== stf) return false;
     if (mgr && (c.manager || "") !== mgr) return false;
+    if (updf) {
+      const upd = containerUpdateInfo(c);
+      const avail = !!(upd && upd.update_available);
+      if (updf === "available" && !avail) return false;
+      if (updf === "latest" && avail) return false;
+    }
     if (!q) return true;
     const blob = [c.name, c.id, c.image, c.manager, c.compose_project, c.label].join(" ");
     return matchFilter(blob, q);
   });
-  $("#container-count").textContent = `显示 ${items.length} / 共 ${state.containers.length} 个`;
+  const countEl = $("#container-count");
+  if (countEl) countEl.textContent = `显示 ${items.length} / 共 ${state.containers.length} 个`;
   const tbody = $("#container-rows");
+  if (!tbody) return;
   tbody.innerHTML = "";
   items.forEach((c) => {
     const tr = document.createElement("tr");
@@ -1004,17 +1012,25 @@ function renderContainers() {
           ? `<div class="muted mono">template</div>`
           : "";
     const upd = containerUpdateInfo(c);
-    const updBadge = upd && upd.update_available
-      ? `<span class="pill update-yes" title="${escapeHtml(upd.message || "有更新")}">有更新</span>`
-      : "";
+    let detectHtml = `<span class="muted">—</span>`;
+    if (upd) {
+      if (upd.update_available) {
+        detectHtml = `<span class="pill update-yes" title="${escapeHtml(upd.message || "有更新")}">可更新</span>`;
+      } else if (upd.check_ok) {
+        detectHtml = `<span class="pill update-no" title="${escapeHtml(upd.message || "最新")}">最新</span>`;
+      } else {
+        detectHtml = `<span class="pill update-err" title="${escapeHtml(upd.message || "检测异常")}">异常</span>`;
+      }
+    }
     const shortId = String(c.id || "").replace(/^sha256:/, "").slice(0, 12);
     tr.innerHTML = `
       <td class="col-check"><input type="checkbox" class="ctr-sel" data-id="${escapeHtml(id)}" ${checked} /></td>
-      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(c.name || c.id || "")}">${escapeHtml(c.name || c.id)}</strong> ${updBadge}<div class="muted mono cell-clip" title="${escapeHtml(c.id || "")}">${escapeHtml(shortId)}</div></td>
+      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(c.name || c.id || "")}">${escapeHtml(c.name || c.id)}</strong><div class="muted mono cell-clip" title="${escapeHtml(c.id || "")}">${escapeHtml(shortId)}</div></td>
       <td class="col-mgr">${managerPill(c.manager, c.label)}${mgrExtra}</td>
       <td class="cell-text mono"><span class="cell-clip" title="${escapeHtml(c.image || "")}">${escapeHtml(c.image || "")}</span></td>
       <td class="col-status"><span class="${pillClass(c.status)}">${escapeHtml(c.status || "-")}</span></td>
       <td class="col-health"><span class="${pillClass(c.health || "none")}">${escapeHtml(c.health || "-")}</span></td>
+      <td class="col-detect"><div class="detect-cell">${detectHtml}</div></td>
       <td class="col-num">${c.restart_count ?? 0}</td>
       <td class="col-actions actions"></td>
     `;
@@ -1051,7 +1067,7 @@ function renderContainers() {
     tbody.appendChild(tr);
   });
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="8" class="muted">无匹配容器</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="9" class="muted">无匹配容器</td></tr>`;
   }
   tbody.querySelectorAll(".ctr-sel").forEach((cb) => {
     cb.addEventListener("change", () => {
@@ -1135,51 +1151,6 @@ function renderUnraid() {
   if (!items.length) {
     ubody.innerHTML = `<tr><td colspan="5" class="muted">无匹配模板</td></tr>`;
   }
-}
-
-function renderUpdates() {
-  const body = $("#update-rows");
-  if (!body) return;
-  const items = state.updateItems || [];
-  body.innerHTML = "";
-  if (!items.length) {
-    body.innerHTML = `<tr><td colspan="7" class="muted">暂无检测结果 · 后台自动扫描后将显示，或点击「立即检测」</td></tr>`;
-    return;
-  }
-  items.forEach((u) => {
-    const tr = document.createElement("tr");
-    let pill = "update-err";
-    let label = u.message || "-";
-    if (u.update_available) {
-      pill = "update-yes";
-      label = "可更新";
-    } else if (u.check_ok) {
-      pill = "update-no";
-      label = "最新";
-    }
-    const canSel = !!u.update_available;
-    tr.innerHTML = `
-      <td class="col-check"><input type="checkbox" class="upd-sel" data-id="${escapeHtml(u.id || "")}" ${canSel ? "" : "disabled"} ${canSel ? "checked" : ""} /></td>
-      <td class="cell-text"><strong class="cell-clip" title="${escapeHtml(u.name || "")}">${escapeHtml(u.name || "")}</strong><div class="muted mono cell-clip">${escapeHtml((u.id || "").slice(0, 12))}</div></td>
-      <td class="col-mgr">${managerPill(u.manager)}</td>
-      <td class="cell-text mono small"><span class="cell-clip" title="${escapeHtml(u.image || "")}">${escapeHtml(u.image || "-")}</span></td>
-      <td class="col-status"><span class="${pillClass(u.status)}">${escapeHtml(u.status || "-")}</span></td>
-      <td class="col-detect"><div class="detect-cell" title="${escapeHtml(u.message || label)}"><span class="pill ${pill}">${escapeHtml(label)}</span></div></td>
-      <td class="col-actions actions"></td>
-    `;
-    if (u.id) {
-      fillActionGroup(
-        tr.querySelector(".actions"),
-        [
-          { label: u.update_available ? "更新" : "安全更新", fn: () => doUpdate(u.id), primary: !!u.update_available },
-          { label: "日志", fn: () => showLogs(u.id, u.name) },
-          { label: "详情", fn: () => showDetail(u.id, u.name) },
-        ],
-        []
-      );
-    }
-    body.appendChild(tr);
-  });
 }
 
 function renderActivity(items) {
@@ -2807,7 +2778,6 @@ async function runDetectUpdates() {
     };
     applyUpdateStatus(state.updateStatus);
     if (prog) prog.textContent = `完成 · 耗时 ${r.elapsed_sec ?? "?"}s`;
-    renderUpdates();
     renderContainers();
     return r;
   } catch (e) {
@@ -2882,9 +2852,24 @@ async function runOneClickUpdate(ids) {
 }
 
 function selectedUpdateIds() {
-  return Array.from(document.querySelectorAll(".upd-sel:checked"))
+  /** Prefer checked containers that currently have updates; else all available. */
+  const checked = Array.from(document.querySelectorAll(".ctr-sel:checked"))
     .map((el) => el.dataset.id)
     .filter(Boolean);
+  const available = new Set(
+    (state.updateItems || [])
+      .filter((u) => u.update_available && u.id)
+      .map((u) => u.id)
+  );
+  const fromChecked = checked.filter((id) => {
+    if (available.has(id)) return true;
+    const short = String(id).slice(0, 12);
+    return [...available].some((x) => x === id || String(x).startsWith(short) || String(x).slice(0, 12) === short);
+  });
+  if (fromChecked.length) return fromChecked;
+  return (state.updateItems || [])
+    .filter((u) => u.update_available && u.id)
+    .map((u) => u.id);
 }
 
 // ── Event bindings ──
@@ -2986,7 +2971,12 @@ $("#img-check-all")?.addEventListener("change", (e) => {
   });
   updateImageSelCount();
 });
-$("#stat-updates-chip")?.addEventListener("click", () => switchTab("updates"));
+$("#stat-updates-chip")?.addEventListener("click", () => {
+  const uf = $("#container-update-filter");
+  if (uf) uf.value = "available";
+  switchTab("containers");
+  renderContainers();
+});
 const nf = $("#network-filter");
 if (nf) nf.addEventListener("input", renderNetworks);
 const vf = $("#volume-filter");
@@ -3012,11 +3002,11 @@ $("#btn-one-click-update")?.addEventListener("click", () => {
   runOneClickUpdate(ids.length ? ids : null);
 });
 $("#btn-quick-detect")?.addEventListener("click", async () => {
-  switchTab("updates");
+  switchTab("containers");
   await runDetectUpdates();
 });
 $("#btn-quick-update-all")?.addEventListener("click", async () => {
-  switchTab("updates");
+  switchTab("containers");
   if (!state.updateItems.length) await runDetectUpdates();
   await runOneClickUpdate(null);
 });
@@ -3024,6 +3014,9 @@ $("#btn-goto-containers")?.addEventListener("click", () => switchTab("containers
 $("#btn-goto-system")?.addEventListener("click", () => switchTab("system"));
 $("#btn-goto-docs")?.addEventListener("click", () => switchTab("docs"));
 
+$("#container-update-filter")?.addEventListener("change", renderContainers);
+
+/* legacy no-op if old markup still cached */
 $("#upd-check-all")?.addEventListener("change", (e) => {
   document.querySelectorAll(".upd-sel:not(:disabled)").forEach((c) => {
     c.checked = e.target.checked;

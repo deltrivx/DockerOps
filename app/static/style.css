@@ -1104,6 +1104,16 @@ td.cell-text .pill {
   gap: 0.5rem;
 }
 
+.update-bar {
+  gap: 0.55rem;
+  margin: 0.35rem 0 0.55rem;
+  align-items: center;
+}
+.update-bar .toolbar {
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
 /* Keep scroll; hide chrome so it doesn't clash with card background */
 .events {
   display: grid;

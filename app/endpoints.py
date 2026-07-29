@@ -25,7 +25,9 @@ def validate_docker_host(docker_host: str) -> str:
         raise ValueError("docker_host 不能为空")
     if not _HOST_RE.match(h):
         raise ValueError(
-            "docker_host 格式无效，示例：unix:///var/run/docker.sock 或 tcp://192.168.1.10:2375"
+            "docker_host 格式无效。示例：unix:///var/run/docker.sock · "
+            "tcp://192.168.1.10:2375 · tcp://docker.example.com:443（域名+TLS 反代 Docker API）· "
+            "ssh://user@host"
         )
     return h
 

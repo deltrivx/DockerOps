@@ -119,8 +119,17 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.6.4"
+VERSION = "0.6.5"
 CHANGELOG = [
+    {
+        "version": "0.6.5",
+        "date": "2026-07-29",
+        "items": [
+            "更新检测并入「容器」页：独立侧栏「更新检测」已移除",
+            "容器表新增「更新」列与筛选；立即检测 / 一键更新保留在容器工具栏",
+            "说明日志补充「域名 + Docker API」远程端点方案；设置页 Host 示例扩展",
+        ],
+    },
     {
         "version": "0.6.4",
         "date": "2026-07-29",

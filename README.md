@@ -290,6 +290,31 @@ docker compose --profile takeover up -d
 | 启停 / 重启 / 暂停 / 拉镜像 | 登录 |
 | 删除 / prune / 建删网络卷 / compose up-down / 模板重建 / Adopt | 登录 + `TAKEOVER=true` |
 
+### 远程 Docker：域名 + API（推荐方案）
+
+DockerOps 通过 **系统设置 → Docker 端点** 连接多台引擎。`docker_host` 使用 Docker SDK 协议，**不是**在浏览器里直接调远程域名，而是 DockerOps 服务端代连：
+
+| 场景 | Host 示例 | 说明 |
+|------|-----------|------|
+| 本机 | `unix:///var/run/docker.sock` | 默认 |
+| 局域网明文 | `tcp://192.168.31.5:2375` | **仅内网**；公网禁止 |
+| 局域网 TLS | `tcp://192.168.31.5:2376` | 勾选 TLS，填 CA/Cert/Key |
+| **域名 + HTTPS 反代** | `tcp://docker.example.com:443` | 远程主机用 Nginx/Caddy 把 Docker API 挂到域名，DockerOps 端点填 `tcp://域名:443` + TLS |
+| SSH 隧道 | `ssh://user@host` | 需 DockerOps 容器/宿主机有 ssh 客户端与密钥 |
+
+**推荐落地步骤（域名 + API）：**
+
+1. **远程主机**只监听本机 Docker API（不要对公网开 2375）。
+2. 用 **反向代理 + TLS** 暴露 Engine API，并加访问控制（mTLS 客户端证书 / IP 白名单 / 内网或 VPN）。
+3. 在 DockerOps「添加端点」：
+   - 名称：如 `FnOS-远程`
+   - Host：`tcp://docker.example.com:443`
+   - 启用 TLS；有客户端证书则粘贴 PEM；仅受信内网可酌情关「校验证书」
+4. 「测试」连通后切换顶栏端点；容器/镜像/更新检测走该引擎。
+5. **Compose / Unraid 模板** 仍仅本地 unix 端点（路径挂载依赖本机）。
+
+**安全红线：** 裸奔 `0.0.0.0:2375` 等于把 root 级 Docker 交给全网。域名方案必须 TLS + 认证/网络隔离。
+
 ---
 
 ## API 概览
