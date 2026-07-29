@@ -139,7 +139,7 @@ DockerOps 会记录关键运维动作和诊断结果，方便你回头查看：
 - Unraid Docker 页仍显示为官方管理应用，**不是三方**
 - 三方容器可 **Adopt** 生成模板并纳入 dockerMan
 
-仓库提供 [`unraid/my-dockerops.xml`](unraid/my-dockerops.xml)，可将 DockerOps 自身装为 Unraid 应用。
+仓库提供 [`unraid/my-DockerOps.xml`](unraid/my-DockerOps.xml)，可将 DockerOps 自身装为 Unraid 应用。
 
 ### 10. 日常运维资源中心（v0.3，Portainer 日常替代）
 
@@ -159,7 +159,7 @@ DockerOps 会记录关键运维动作和诊断结果，方便你回头查看：
 
 | 主机 | 接管方式 | 文档 |
 |------|----------|------|
-| Unraid (Tower) | dockerMan 模板 + 可选 Compose | [`unraid/my-dockerops.xml`](unraid/my-dockerops.xml) |
+| Unraid (Tower) | dockerMan 模板 + 可选 Compose | [`unraid/my-DockerOps.xml`](unraid/my-DockerOps.xml) |
 | 飞牛 (FnOS) | **引擎级 Compose**（不深绑 AppCenter） | [`fnos/README.md`](fnos/README.md) |
 
 ---
@@ -260,7 +260,7 @@ Swagger：`http://<host>:8080/docs`
 /var/run/docker.sock                           →  /var/run/docker.sock   (接管时用 rw)
 ```
 
-推荐用 [`unraid/my-dockerops.xml`](unraid/my-dockerops.xml) 安装，保证 DockerOps 自身为 dockerman 应用。
+推荐用 [`unraid/my-DockerOps.xml`](unraid/my-DockerOps.xml) 安装，保证 DockerOps 自身为 dockerman 应用。
 
 ### 飞牛 (FnOS) 挂载约定
 
@@ -405,7 +405,7 @@ DockerOps/
 │   ├── manager.py · compose_mgr.py · unraid_mgr.py · ops.py
 │   ├── docker_client.py · doctor.py · monitor.py · auth.py · db.py
 │   ├── static/ · templates/
-├── unraid/my-dockerops.xml · icon.png
+├── unraid/my-DockerOps.xml · icon.png
 ├── fnos/
 │   ├── docker-compose.yml · README.md
 │   └── fpk/                 # 飞牛专业安装包源（manifest/图标/向导/启停）

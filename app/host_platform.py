@@ -131,7 +131,7 @@ def platform_info() -> dict[str, Any]:
                 "挂载 /boot/config/plugins/dockerMan/templates-user → /unraid/templates-user"
             )
         mount_hints.append(
-            "接管时 docker.sock 使用 rw；推荐用 unraid/my-dockerops.xml 安装以保持 dockerman"
+            "接管时 docker.sock 使用 rw；推荐用 unraid/my-DockerOps.xml 安装以保持 dockerman"
         )
     elif platform == "fnos":
         mount_hints.append(
