@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <title>{{ title }} — {{ subtitle }}</title>
-  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.7.0') }}" />
-  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.7.0') }}" />
+  <link rel="stylesheet" href="/static/style.css?v={{ asset_v|default('0.7.1') }}" />
+  <link rel="stylesheet" href="/static/vendor/xterm.css?v={{ asset_v|default('0.7.1') }}" />
 </head>
 <body data-bg="cyber" data-density="comfortable">
   <canvas id="particles" aria-hidden="true"></canvas>
@@ -54,7 +54,7 @@
         </button>
       </nav>
       <div class="sidebar-foot muted small" id="sidebar-version">
-        v0.7.0 · —
+        v0.7.1 · —
       </div>
     </aside>
     <div class="sidebar-backdrop mobile-only" id="sidebar-backdrop" hidden></div>
@@ -77,11 +77,20 @@
           </label>
           <div id="platform-badge" class="badge">平台: --</div>
           <div id="takeover-badge" class="badge">接管: --</div>
+          <div id="remote-badge" class="badge" hidden>远程</div>
           <div id="auth-state" class="muted">未登录</div>
           <button id="btn-refresh" class="btn">刷新</button>
           <button id="btn-login" class="btn primary">登录</button>
         </div>
       </header>
+      <div id="remote-lock-banner" class="remote-lock-banner" hidden>
+        <div class="remote-lock-inner">
+          <strong>远程托管锁定</strong>
+          <span id="remote-lock-text">本机写操作已移交主控，仅可查看与断开远程。</span>
+          <button type="button" class="btn" id="btn-remote-lock-disconnect">断开远程</button>
+          <button type="button" class="btn" id="btn-remote-goto-settings">远程设置</button>
+        </div>
+      </div>
       <div id="load-banner" class="load-banner" hidden>加载中…</div>
 
       <main class="grid" id="main-grid">
@@ -536,7 +545,7 @@
             <article class="doc-card">
               <h3>远程模式（哪吒同款拨出）</h3>
               <p>推荐：在「系统设置 → 远程模式」开启。主控生成 60 秒凭证；被控填写主控 DockerOps 域名/IP 并粘贴凭证，<strong>主动拨出</strong>连到主控（WSS）。
-                不开放 Docker Engine 端口（2375/2376）。一期为协同模式：主控顶栏切换「远程 · 节点」即可管理被控容器/镜像/更新。</p>
+                不开放 Docker Engine 端口（2375/2376）。支持<strong>协同</strong>（双方可操作）与<strong>托管锁定</strong>（被控本地写操作禁用，主控仍可通过 RPC 管理；可随时切换）。</p>
             </article>
             <article class="doc-card">
               <h3>远程 Docker Engine 端点（可选）</h3>
@@ -654,7 +663,7 @@
                 <span>被控接入方式</span>
                 <select id="remote-agent-mode" class="input select">
                   <option value="collab">协同（双方可操作）</option>
-                  <option value="managed" disabled>托管锁定（二期）</option>
+                  <option value="managed">托管锁定（被控本地写操作禁用）</option>
                 </select>
               </label>
               <label class="setting-row" id="row-remote-public-url" style="grid-column:1/-1">
@@ -677,6 +686,9 @@
               <div id="remote-pair-box" class="mt" hidden>
                 <div class="kv"><span class="k">完整凭证</span><span class="v mono" id="remote-pair-code">—</span></div>
                 <div class="kv"><span class="k">倒计时</span><span class="v" id="remote-pair-ttl">—</span></div>
+                <div class="toolbar mt" style="margin-top:0.4rem">
+                  <button type="button" class="btn" id="btn-remote-copy-pair">复制凭证</button>
+                </div>
                 <p class="muted small" id="remote-pair-msg"></p>
               </div>
               <div class="table-wrap mt">
@@ -803,7 +815,7 @@
       </main>
 
       <footer class="foot muted">
-        DockerOps <span id="foot-version">v0.7.0</span> ·
+        DockerOps <span id="foot-version">v0.7.1</span> ·
         <span id="foot-platform">—</span> ·
         <a href="/docs" target="_blank" rel="noopener">Swagger</a>
       </footer>
@@ -922,9 +934,9 @@
     <div id="image-detail-body" class="detail-body"></div>
   </dialog>
 
-  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.7.0') }}"></script>
-  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.7.0') }}"></script>
-  <script src="/static/particles.js?v={{ asset_v|default('0.7.0') }}"></script>
-  <script src="/static/app.js?v={{ asset_v|default('0.7.0') }}"></script>
+  <script src="/static/vendor/xterm.min.js?v={{ asset_v|default('0.7.1') }}"></script>
+  <script src="/static/vendor/xterm-addon-fit.min.js?v={{ asset_v|default('0.7.1') }}"></script>
+  <script src="/static/particles.js?v={{ asset_v|default('0.7.1') }}"></script>
+  <script src="/static/app.js?v={{ asset_v|default('0.7.1') }}"></script>
 </body>
 </html>

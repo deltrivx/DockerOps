@@ -1343,6 +1343,46 @@ body.auth-locked .shell {
   display: none !important;
 }
 
+.remote-lock-banner {
+  margin: 0;
+  padding: 0.55rem 1rem;
+  border-bottom: 1px solid rgba(239, 68, 68, 0.35);
+  background: linear-gradient(90deg, rgba(239, 68, 68, 0.18), rgba(108, 92, 231, 0.1));
+  color: var(--text);
+}
+.remote-lock-banner[hidden] {
+  display: none !important;
+}
+.remote-lock-inner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem 0.85rem;
+  font-size: 0.88rem;
+}
+.remote-lock-inner strong {
+  color: #fca5a5;
+  letter-spacing: 0.02em;
+}
+.remote-lock-inner #remote-lock-text {
+  flex: 1 1 14rem;
+  color: var(--muted);
+}
+body.remote-managed-lock .nav-item[data-tab="containers"],
+body.remote-managed-lock .nav-item[data-tab="images"],
+body.remote-managed-lock .nav-item[data-tab="networks"],
+body.remote-managed-lock .nav-item[data-tab="volumes"],
+body.remote-managed-lock .nav-item[data-tab="compose"],
+body.remote-managed-lock .nav-item[data-tab="unraid"] {
+  opacity: 0.72;
+}
+body.remote-managed-lock .tab-panel[data-panel="containers"] .toolbar .btn.primary,
+body.remote-managed-lock .tab-panel[data-panel="containers"] .batch-actions .btn,
+body.remote-managed-lock .tab-panel[data-panel="images"] .toolbar .btn.primary {
+  /* visual hint; API still enforces 423 */
+  box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.25);
+}
+
 .error { color: var(--bad); margin: 0; font-size: 0.85rem; }
 
 .logs-dialog, .detail-dialog {

@@ -12,6 +12,7 @@ from typing import Any
 from urllib.parse import urlparse, urlunparse
 
 from remote import (
+    apply_agent_mode_change,
     execute_local_rpc,
     get_remote_settings,
     set_remote_settings,
@@ -120,6 +121,10 @@ async def _agent_loop(base_url: str, pair_code: str, agent_name: str, mode: str)
                         continue
                     if typ == "bye":
                         break
+                    if typ == "mode_change":
+                        apply_agent_mode_change(data.get("mode") or "collab")
+                        _set_state(mode=data.get("mode") or "collab")
+                        continue
                     if typ == "rpc":
                         result = execute_local_rpc(
                             data.get("method") or "GET",
@@ -220,6 +225,10 @@ async def _agent_loop_aiohttp(base_url: str, pair_code: str, agent_name: str, mo
                             continue
                         if typ == "bye":
                             break
+                        if typ == "mode_change":
+                            apply_agent_mode_change(data.get("mode") or "collab")
+                            _set_state(mode=data.get("mode") or "collab")
+                            continue
                         if typ == "rpc":
                             result = execute_local_rpc(
                                 data.get("method") or "GET",

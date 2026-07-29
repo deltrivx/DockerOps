@@ -371,6 +371,9 @@ def redeem_pair_code(
     st["status"] = "connected"
     st["active_session_id"] = session_id
     st["active_peer_name"] = agent_name or "被控"
+    # controller remembers last pair mode preference for UI
+    if mode_n == "managed":
+        st["agent_mode"] = "managed"
     set_remote_settings(st)
     audit(
         "remote_pair_ok",
@@ -454,6 +457,139 @@ def get_session_by_token(token: str) -> dict[str, Any] | None:
     if d["expires_at"] < _now():
         return None
     return d
+
+
+def get_session(session_id: str) -> dict[str, Any] | None:
+    if not session_id:
+        return None
+    ensure_remote_tables()
+    with _lock:
+        conn = connect()
+        try:
+            row = conn.execute(
+                "SELECT * FROM remote_sessions WHERE session_id = ? AND revoked = 0",
+                (session_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+    if not row:
+        return None
+    d = _row_to_dict(row)
+    if d["expires_at"] < _now():
+        return None
+    d["online"] = session_id in _sessions_ws or bool(d.get("online"))
+    return d
+
+
+async def notify_agent_mode(session_id: str, mode: str) -> bool:
+    """Push mode_change to an online agent WebSocket. Returns True if sent."""
+    ws = _sessions_ws.get(session_id)
+    if ws is None:
+        return False
+    mode_n = "managed" if str(mode).lower() == "managed" else "collab"
+    await ws.send_text(
+        json.dumps(
+            {"type": "mode_change", "mode": mode_n, "session_id": session_id},
+            ensure_ascii=False,
+        )
+    )
+    return True
+
+
+def set_session_mode(session_id: str, mode: str, *, actor: str | None = None) -> dict[str, Any]:
+    """Controller switches collab <-> managed for an active session."""
+    mode_n = "managed" if str(mode).lower() == "managed" else "collab"
+    sess = get_session(session_id)
+    if not sess:
+        raise ValueError("远程会话不存在或已断开")
+    with _lock:
+        conn = connect()
+        try:
+            conn.execute(
+                "UPDATE remote_sessions SET mode = ?, last_seen = ? WHERE session_id = ?",
+                (mode_n, _now(), session_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    # best-effort notify if loop is running (async route also calls notify_agent_mode)
+    ws = _sessions_ws.get(session_id)
+    if ws is not None:
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(notify_agent_mode(session_id, mode_n))
+        except RuntimeError:
+            pass
+    if actor:
+        audit(
+            "remote_mode_change",
+            actor=actor,
+            detail={"session_id": session_id, "mode": mode_n},
+        )
+    updated = get_session(session_id) or {}
+    updated["mode"] = mode_n
+    return {
+        "ok": True,
+        "session_id": session_id,
+        "mode": mode_n,
+        "online": bool(updated.get("online")),
+        "peer_name": updated.get("peer_name") or "",
+        "message": f"已切换为「{'托管锁定' if mode_n == 'managed' else '协同'}」",
+    }
+
+
+def agent_is_managed_locked() -> bool:
+    """True when this process is agent under managed lock (local writes blocked)."""
+    st = get_remote_settings()
+    if not st.get("enabled") or st.get("role") != "agent":
+        return False
+    if (st.get("agent_mode") or "") == "managed" and st.get("status") in (
+        "connected",
+        "managed_lock",
+        "waiting_pair",
+    ):
+        # prefer explicit managed_lock / connected with managed mode
+        if st.get("status") == "managed_lock":
+            return True
+        if st.get("status") == "connected" and (st.get("agent_mode") or "") == "managed":
+            return True
+    return st.get("status") == "managed_lock"
+
+
+def apply_agent_mode_change(mode: str) -> dict[str, Any]:
+    """Called on agent when controller pushes mode_change."""
+    mode_n = "managed" if str(mode).lower() == "managed" else "collab"
+    st = get_remote_settings()
+    st["agent_mode"] = mode_n
+    st["status"] = "managed_lock" if mode_n == "managed" else "connected"
+    set_remote_settings(st)
+    return public_settings_view(st)
+
+
+# Paths local UI may still POST while managed (auth / remote self-control / prefs read)
+_MANAGED_LOCAL_WRITE_ALLOW = (
+    "/api/auth",
+    "/api/remote",
+    "/api/prefs",
+    "/api/system/settings",
+    "/api/endpoints",
+)
+
+
+def managed_blocks_local_path(method: str, path: str) -> bool:
+    """Whether managed lock should reject a local (non-RPC) mutating request."""
+    if not agent_is_managed_locked():
+        return False
+    m = (method or "GET").upper()
+    if m in ("GET", "HEAD", "OPTIONS"):
+        return False
+    p = (path or "").split("?", 1)[0]
+    if any(p == a or p.startswith(a + "/") for a in _MANAGED_LOCAL_WRITE_ALLOW):
+        return False
+    # block docker/resource mutations from local UI
+    if p.startswith("/api/"):
+        return True
+    return False
 
 
 def touch_session(session_id: str, *, online: bool | None = None) -> None:
@@ -578,9 +714,24 @@ def public_remote_status() -> dict[str, Any]:
     st = get_remote_settings()
     sessions = list_remote_sessions() if st.get("enabled") and st.get("role") == "controller" else []
     online_n = sum(1 for s in sessions if s.get("online"))
+    locked = agent_is_managed_locked()
+    role = st.get("role") or ""
+    if not st.get("enabled"):
+        hint = "远程模式关闭"
+    elif role == "controller":
+        hint = f"主控端 · 已配对 {len(sessions)} · 在线 {online_n}（被控拨出，无 Docker 端口）"
+    elif role == "agent":
+        if locked:
+            hint = f"被控端 · 托管锁定中 · 主控：{st.get('active_peer_name') or st.get('controller_base_url') or '—'}"
+        elif st.get("status") in ("connected", "managed_lock"):
+            hint = f"被控端 · 协同已连接 · 主控：{st.get('active_peer_name') or '—'}"
+        else:
+            hint = "被控端 · 填写主控地址与凭证后连接"
+    else:
+        hint = "请选择主控端或被控端"
     return {
         "enabled": bool(st.get("enabled")),
-        "role": st.get("role") or "",
+        "role": role,
         "agent_mode": st.get("agent_mode") or "collab",
         "display_name": st.get("display_name") or "",
         "controller_base_url": st.get("controller_base_url") or "",
@@ -588,14 +739,11 @@ def public_remote_status() -> dict[str, Any]:
         "status": st.get("status") or "idle",
         "active_session_id": st.get("active_session_id") or "",
         "active_peer_name": st.get("active_peer_name") or "",
+        "managed_locked": locked,
         "sessions": sessions,
         "online_count": online_n,
         "pair_ttl_sec": PAIR_TTL_SEC,
-        "hint": (
-            "哪吒同款：被控主动连接主控 DockerOps 地址；不开放 Docker 2375/2376。"
-            if st.get("enabled")
-            else "远程模式关闭"
-        ),
+        "hint": hint,
     }
 
 

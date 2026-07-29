@@ -118,12 +118,15 @@ from update_detect import (
     start_update_auto_check_thread,
 )
 from remote import (
+    agent_is_managed_locked,
     create_pair_code,
     get_pair_status,
     get_remote_settings,
+    get_session,
     get_session_by_token,
     is_agent_online,
     list_remote_sessions,
+    managed_blocks_local_path,
     normalize_base_url,
     parse_remote_endpoint_id,
     public_remote_status,
@@ -135,13 +138,23 @@ from remote import (
     revoke_session,
     rpc_to_agent,
     set_remote_settings,
+    set_session_mode,
     unregister_agent_ws,
 )
 from remote_agent import agent_runtime_state, start_agent_dial, stop_agent_dial
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.7.0"
+VERSION = "0.7.1"
 CHANGELOG = [
+    {
+        "version": "0.7.1",
+        "date": "2026-07-29",
+        "items": [
+            "远程托管锁定：被控全屏锁定条 + 本地写操作 API 门禁（主控 RPC 仍可管）",
+            "主控可对节点切换 协同/托管；被控实时 mode_change；状态条与凭证一键复制",
+            "远程状态轮询刷新；会话列表展示模式并支持断开",
+        ],
+    },
     {
         "version": "0.7.0",
         "date": "2026-07-29",
@@ -565,6 +578,10 @@ class RemoteAgentConnectBody(BaseModel):
     mode: str | None = "collab"
 
 
+class RemoteSessionModeBody(BaseModel):
+    mode: str = Field(..., description="collab | managed")
+
+
 META_SYSTEM_PROXY = "system_proxy"
 META_ACTIVE_REMOTE = "active_remote_endpoint"
 
@@ -726,6 +743,22 @@ async def endpoint_context_middleware(request: Request, call_next):
     Remote agent sessions use id ``remote:{session_id}`` and are proxied over
     the agent dial-out WebSocket (no Docker Engine port).
     """
+    # Managed lock: block local UI mutations on agent (controller RPC bypasses this —
+    # RPC runs inside execute_local_rpc on agent without going through this path as client).
+    # Local browser → agent HTTP still hits this middleware.
+    try:
+        if managed_blocks_local_path(request.method, request.url.path):
+            return JSONResponse(
+                status_code=423,
+                content={
+                    "ok": False,
+                    "detail": "本机处于远程托管锁定：容器/镜像等写操作仅能由主控端发起。可在主控切换为「协同」或断开远程后本地操作。",
+                    "managed_locked": True,
+                },
+            )
+    except Exception:
+        pass
+
     eid = (
         request.headers.get("X-DockerOps-Endpoint")
         or request.query_params.get("endpoint")
@@ -914,6 +947,21 @@ def api_health() -> dict[str, Any]:
         active = _active_ep()
     except Exception:
         pass
+    remote_snip: dict[str, Any] = {}
+    try:
+        rs = public_remote_status()
+        remote_snip = {
+            "enabled": rs.get("enabled"),
+            "role": rs.get("role"),
+            "status": rs.get("status"),
+            "agent_mode": rs.get("agent_mode"),
+            "managed_locked": rs.get("managed_locked"),
+            "active_peer_name": rs.get("active_peer_name"),
+            "online_count": rs.get("online_count"),
+            "hint": rs.get("hint"),
+        }
+    except Exception:
+        remote_snip = {"enabled": False}
     return {
         "ok": True,
         "service": "dockerops",
@@ -931,6 +979,8 @@ def api_health() -> dict[str, Any]:
         "takeover_enabled": get_settings().takeover_enabled,
         "resource_apis": get_settings().resource_apis,
         "unraid_templates_available": templates_available(),
+        "remote": remote_snip,
+        "managed_locked": bool(remote_snip.get("managed_locked")),
     }
 
 
@@ -2361,6 +2411,31 @@ def api_remote_session_disconnect(session_id: str, actor: AuthUser) -> dict[str,
     if stored == remote_endpoint_id(session_id):
         set_meta(META_ACTIVE_REMOTE, "")
     return {"ok": True, "message": "已断开远程节点"}
+
+
+@app.post("/api/remote/sessions/{session_id}/mode")
+async def api_remote_session_mode(
+    session_id: str, body: RemoteSessionModeBody, actor: AuthUser
+) -> dict[str, Any]:
+    st = get_remote_settings()
+    if not st.get("enabled") or st.get("role") != "controller":
+        raise HTTPException(status_code=400, detail="仅主控端可切换远程节点模式")
+    mode = (body.mode or "").strip().lower()
+    if mode not in ("collab", "managed"):
+        raise HTTPException(status_code=400, detail="mode 须为 collab 或 managed")
+    try:
+        result = set_session_mode(session_id, mode, actor=actor)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    # set_session_mode already best-effort notifies; double-send if still online
+    if is_agent_online(session_id):
+        try:
+            from remote import notify_agent_mode
+
+            await notify_agent_mode(session_id, mode)
+        except Exception:
+            pass
+    return result
 
 
 @app.get("/api/remote/sessions")
