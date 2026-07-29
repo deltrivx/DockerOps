@@ -4,7 +4,7 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.6.3",
+  version: "0.6.4",
   tab: "overview",
   endpoints: [],
   endpointId: localStorage.getItem("dockerops_endpoint") || "",

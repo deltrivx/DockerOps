@@ -119,8 +119,16 @@ from update_detect import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.6.3"
+VERSION = "0.6.4"
 CHANGELOG = [
+    {
+        "version": "0.6.4",
+        "date": "2026-07-29",
+        "items": [
+            "总览「近期 Docker 事件」隐藏横向/纵向滚动条外观，保留滚轮与触控滑动",
+            "事件行长文本自动换行，减少不必要的横向溢出",
+        ],
+    },
     {
         "version": "0.6.3",
         "date": "2026-07-29",

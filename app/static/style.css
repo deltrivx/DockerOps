@@ -1104,11 +1104,27 @@ td.cell-text .pill {
   gap: 0.5rem;
 }
 
-.events { display: grid; gap: 0.35rem; max-height: 300px; overflow: auto; }
+/* Keep scroll; hide chrome so it doesn't clash with card background */
+.events {
+  display: grid;
+  gap: 0.35rem;
+  max-height: 300px;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none; /* Firefox */
+  -ms-overflow-style: none; /* legacy Edge */
+}
+.events::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none; /* Chromium / Safari */
+}
 .event-line {
   font-size: 0.86rem;
   padding: 0.28rem 0;
   border-bottom: 1px solid var(--border);
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .subh {
