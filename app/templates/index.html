@@ -649,19 +649,8 @@
           <div class="settings-section" id="remote-mode-section">
             <h3>远程模式</h3>
             <p class="muted small" id="remote-intro-off">
-              默认关闭，对本机无影响。开启后先选角色；仅 DockerOps Web/WSS，
+              默认关闭，对本机无影响。勾选启用后选择主控或被控；仅 DockerOps Web/WSS，
               <strong>不</strong>开放 Docker 2375/2376。
-            </p>
-            <p class="muted small" id="remote-intro-on" hidden>
-              请选择本机角色。后续输入会按步骤出现，未选完前不会展开。
-            </p>
-            <p class="muted small" id="remote-intro-controller" hidden>
-              <strong>主控端不需要公网。</strong>只需粘贴被控生成的连接凭证（凭证内已含被控地址）。
-              本机功能不受影响；你的网络须能访问被控填的地址（局域网或被控已映射/反代）。
-            </p>
-            <p class="muted small" id="remote-intro-agent" hidden>
-              <strong>被控端</strong>：先选协同/托管 → 再填<strong>本机</strong>公网域名或 IP（给主控连过来）→ 生成 60 秒凭证。
-              未选模式时不会出现地址与生成按钮。
             </p>
 
             <div class="settings-grid">
@@ -671,38 +660,38 @@
               </label>
             </div>
 
+            <!-- 勾选后：只先出现角色 -->
             <div id="remote-step-role" class="mt" hidden>
               <div class="settings-grid">
                 <label class="setting-row" id="row-remote-role">
                   <span>本机角色</span>
                   <select id="remote-role" class="input select">
                     <option value="">请选择…</option>
-                    <option value="controller">主控端（粘贴凭证连接其他设备）</option>
-                    <option value="agent">被控端（生成凭证等待连接）</option>
+                    <option value="controller">主控端</option>
+                    <option value="agent">被控端</option>
                   </select>
                 </label>
-                <label class="setting-row" id="row-remote-display-name" hidden>
-                  <span>显示名称</span>
-                  <input type="text" class="input" id="remote-display-name" placeholder="例如：Tower 主控 / 飞牛被控" autocomplete="off" />
-                </label>
               </div>
-              <div class="toolbar mt" id="remote-save-bar" hidden>
-                <button type="button" class="btn" id="btn-remote-save">保存名称 / 角色</button>
-                <span class="muted small" id="remote-settings-status"></span>
-              </div>
+              <span class="muted small" id="remote-settings-status" hidden></span>
             </div>
 
+            <!-- 主控：名字 + 连接凭证 + 连接 -->
             <div id="remote-controller-panel" class="mt" hidden>
-              <h4 class="muted" style="margin:0.75rem 0 0.35rem">主控 · 连接被控</h4>
-              <p class="muted small">本机<strong>不用填公网</strong>。将<strong>被控生成</strong>的连接凭证粘贴下方（内含被控地址）。可连接多台。</p>
+              <p class="muted small">
+                主控<strong>不需要</strong>公网。粘贴被控生成的凭证即可（内含被控地址）。本机功能不受影响。
+              </p>
               <div class="settings-grid">
+                <label class="setting-row" id="row-remote-display-name-ctrl">
+                  <span>显示名称</span>
+                  <input type="text" class="input" id="remote-display-name" placeholder="例如：Tower 主控" autocomplete="off" />
+                </label>
                 <label class="setting-row" style="grid-column:1/-1">
                   <span>连接凭证</span>
                   <input type="text" class="input" id="remote-pair-input" placeholder="粘贴被控生成的 dop1.... 凭证" autocomplete="off" />
                 </label>
               </div>
               <div class="toolbar mt">
-                <button type="button" class="btn primary" id="btn-remote-connect">连接远程设备</button>
+                <button type="button" class="btn primary" id="btn-remote-connect">连接</button>
                 <button type="button" class="btn" id="btn-remote-refresh-sessions">刷新节点</button>
                 <span class="muted small" id="remote-controller-status"></span>
               </div>
@@ -723,32 +712,54 @@
               </div>
             </div>
 
+            <!-- 被控：协同/接管 → 域名或IP + 端口 + 生成 -->
             <div id="remote-agent-panel" class="mt" hidden>
-              <h4 class="muted" style="margin:0.75rem 0 0.35rem">被控 · 生成连接凭证</h4>
               <div id="remote-agent-setup">
                 <div class="settings-grid">
                   <label class="setting-row" id="row-remote-agent-mode">
-                    <span>① 选择模式</span>
+                    <span>被控模式</span>
                     <select id="remote-agent-mode" class="input select">
                       <option value="">请选择…</option>
-                      <option value="collab">协同（本地功能仍可操作）</option>
-                      <option value="managed">托管（连接后由主控完全管理）</option>
+                      <option value="collab">协同模式（本地仍可操作）</option>
+                      <option value="managed">接管模式（连接后由主控完全管理）</option>
                     </select>
                   </label>
-                  <label class="setting-row" id="row-remote-public-url" style="grid-column:1/-1" hidden>
-                    <span>② 本机公网域名或 IP</span>
-                    <input type="text" class="input" id="remote-public-url" placeholder="https://ops.example.com 或 http://192.168.31.5:8080" autocomplete="off" />
+                  <label class="setting-row" id="row-remote-display-name-agent" hidden>
+                    <span>显示名称</span>
+                    <input type="text" class="input" id="remote-display-name-agent" placeholder="例如：飞牛被控" autocomplete="off" />
                   </label>
                 </div>
-                <p class="muted small mt" id="remote-agent-url-hint" hidden>
-                  主控必须能打开该地址的 DockerOps 网页。凭证 60 秒内有效，超时可再生成。
-                </p>
+
+                <div id="remote-agent-access" class="mt" hidden>
+                  <p class="muted small" id="remote-agent-url-hint">
+                    填写主控能访问到的<strong>本机</strong>地址（局域网 IP 或已映射/反代的域名）。主控不需要公网。
+                  </p>
+                  <div class="settings-grid">
+                    <label class="setting-row" id="row-remote-host" style="grid-column:1/-1">
+                      <span>域名或 IP</span>
+                      <input type="text" class="input" id="remote-public-host" placeholder="例如 192.168.31.5 或 ops.example.com" autocomplete="off" />
+                    </label>
+                    <label class="setting-row" id="row-remote-port">
+                      <span>端口</span>
+                      <input type="number" class="input" id="remote-public-port" min="1" max="65535" placeholder="8080" value="8080" />
+                    </label>
+                    <label class="setting-row" id="row-remote-scheme">
+                      <span>协议</span>
+                      <select id="remote-public-scheme" class="input select">
+                        <option value="http">http</option>
+                        <option value="https">https</option>
+                      </select>
+                    </label>
+                  </div>
+                  <input type="hidden" id="remote-public-url" value="" />
+                </div>
                 <div class="toolbar mt" id="remote-agent-actions" hidden>
-                  <button type="button" class="btn primary" id="btn-remote-pair">③ 生成专属凭证</button>
+                  <button type="button" class="btn primary" id="btn-remote-pair">生成连接凭证</button>
                   <button type="button" class="btn" id="btn-remote-apply-mode" hidden>应用所选模式</button>
                   <button type="button" class="btn" id="btn-remote-disconnect" hidden>断开 / 重置</button>
                   <span class="muted small" id="remote-agent-status"></span>
                 </div>
+
                 <div id="remote-pair-box" class="mt remote-pair-box" hidden>
                   <div class="kv"><span class="k">连接凭证</span><span class="v mono" id="remote-pair-code" style="word-break:break-all">—</span></div>
                   <div class="kv"><span class="k">倒计时</span><span class="v" id="remote-pair-ttl">—</span></div>
@@ -756,7 +767,7 @@
                     <button type="button" class="btn primary" id="btn-remote-copy-pair">复制连接凭证</button>
                     <button type="button" class="btn" id="btn-remote-pair-regen" hidden>重新生成</button>
                   </div>
-                  <p class="muted small" id="remote-pair-msg">等待主控在时限内粘贴连接…</p>
+                  <p class="muted small" id="remote-pair-msg">等待主控在 60 秒内粘贴连接…</p>
                 </div>
               </div>
               <div id="remote-agent-connected" class="mt" hidden>

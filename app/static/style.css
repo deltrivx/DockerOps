@@ -1374,9 +1374,15 @@ body.auth-locked .shell {
 #remote-agent-panel[hidden],
 #remote-agent-setup[hidden],
 #remote-agent-connected[hidden],
+#remote-agent-access[hidden],
 #remote-pair-box[hidden],
 #row-remote-public-url[hidden],
+#row-remote-host[hidden],
+#row-remote-port[hidden],
+#row-remote-scheme[hidden],
 #row-remote-display-name[hidden],
+#row-remote-display-name-ctrl[hidden],
+#row-remote-display-name-agent[hidden],
 #remote-save-bar[hidden],
 #remote-agent-actions[hidden],
 #remote-session-table-wrap[hidden],
@@ -1388,7 +1394,8 @@ body.auth-locked .shell {
 #btn-remote-pair[hidden],
 #btn-remote-apply-mode[hidden],
 #btn-remote-disconnect[hidden],
-#btn-remote-pair-regen[hidden] {
+#btn-remote-pair-regen[hidden],
+#remote-settings-status[hidden] {
   display: none !important;
 }
 .remote-lock-inner {

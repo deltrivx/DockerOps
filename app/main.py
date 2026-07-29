@@ -155,8 +155,17 @@ from remote_controller import (
 )
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.8.2"
+VERSION = "0.8.3"
 CHANGELOG = [
+    {
+        "version": "0.8.3",
+        "date": "2026-07-29",
+        "items": [
+            "远程设置严格分步：默认仅「启用」；勾选后出角色；主控=名称+凭证+连接；被控=协同/接管后再出域名或IP、端口、生成",
+            "被控地址改为「域名或IP + 端口 + 协议」分栏，生成时合成访问 URL",
+            "主控无需公网；关闭远程清空向导态",
+        ],
+    },
     {
         "version": "0.8.2",
         "date": "2026-07-29",
