@@ -4,11 +4,13 @@ const state = {
   takeover: false,
   consoleEnabled: false,
   platform: "generic",
-  version: "0.6.5",
+  version: "0.7.0",
   tab: "overview",
   endpoints: [],
   endpointId: localStorage.getItem("dockerops_endpoint") || "",
   endpoint: null,
+  remote: null,
+  remotePairTimer: null,
   /** Live log stream controller */
   logs: {
     id: null,
@@ -284,18 +286,25 @@ function renderEndpointSelect() {
   const cur = state.endpointId || "";
   const opts = items.length
     ? items
-        .map(
-          (e) =>
-            `<option value="${escapeHtml(e.id)}" ${e.id === cur ? "selected" : ""}>${escapeHtml(
-              e.name || e.docker_host || e.id
-            )}${e.is_local ? "" : " · 远程"}</option>`
-        )
+        .map((e) => {
+          const remoteKind = e.kind === "remote_agent";
+          const tag = e.is_local
+            ? ""
+            : remoteKind
+              ? e.online
+                ? " · 远程节点·在线"
+                : " · 远程节点·离线"
+              : " · 远程";
+          return `<option value="${escapeHtml(e.id)}" ${e.id === cur ? "selected" : ""}>${escapeHtml(
+            e.name || e.docker_host || e.id
+          )}${tag}</option>`;
+        })
         .join("")
     : `<option value="">本机</option>`;
   sel.innerHTML = opts;
   sel.disabled = !items.length;
   sel.title = state.endpoint
-    ? `${state.endpoint.name} · ${state.endpoint.docker_host}`
+    ? `${state.endpoint.name} · ${state.endpoint.docker_host || state.endpoint.kind || ""}`
     : "Docker 端点";
 }
 
@@ -317,15 +326,23 @@ function renderEndpointsTable() {
       : e.is_default
         ? `<span class="pill">默认</span>`
         : "";
-    const kind = e.is_local ? "本地" : "远程";
+    const isRemoteAgent = e.kind === "remote_agent";
+    const kind = e.is_local ? "本地" : isRemoteAgent ? "远程节点" : "远程";
+    const onlineBadge = isRemoteAgent
+      ? e.online
+        ? `<span class="pill running">在线</span>`
+        : `<span class="pill">离线</span>`
+      : badge;
     tr.innerHTML = `
       <td class="cell-text"><strong class="cell-clip">${escapeHtml(e.name || "")}</strong>
         <div class="muted small cell-clip">${escapeHtml(e.docker_host || "")}</div></td>
       <td class="col-status">${escapeHtml(kind)} ${e.tls_enabled ? "· TLS" : ""}</td>
-      <td class="col-status">${badge}</td>
-      <td class="cell-text muted small">${caps.compose ? "Compose " : ""}${caps.unraid ? "Unraid " : ""}${
-      caps.console ? "终端" : ""
-    }</td>
+      <td class="col-status">${onlineBadge} ${badge}</td>
+      <td class="cell-text muted small">${
+        isRemoteAgent
+          ? "拨出 RPC · 容器/镜像/更新"
+          : `${caps.compose ? "Compose " : ""}${caps.unraid ? "Unraid " : ""}${caps.console ? "终端" : ""}`
+      }</td>
       <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
@@ -338,19 +355,27 @@ function renderEndpointsTable() {
       });
     }
     primary.push({ label: "测试", fn: () => testEndpoint(e.id) });
-    const more = [
-      {
-        label: "设为默认",
-        fn: () => updateEndpoint(e.id, { is_default: true }),
-        disabled: !!e.is_default,
-      },
-      {
-        label: "删除",
-        danger: true,
-        fn: () => deleteEndpoint(e.id),
-        disabled: items.length <= 1,
-      },
-    ];
+    const more = isRemoteAgent
+      ? [
+          {
+            label: "断开节点",
+            danger: true,
+            fn: () => disconnectRemoteSession(String(e.id).replace(/^remote:/, "")),
+          },
+        ]
+      : [
+          {
+            label: "设为默认",
+            fn: () => updateEndpoint(e.id, { is_default: true }),
+            disabled: !!e.is_default,
+          },
+          {
+            label: "删除",
+            danger: true,
+            fn: () => deleteEndpoint(e.id),
+            disabled: items.length <= 1,
+          },
+        ];
     fillActionGroup(actions, primary, more);
     tbody.appendChild(tr);
   });
@@ -370,6 +395,13 @@ async function activateEndpoint(id) {
   if (!id || id === state.endpointId) return;
   if (!requireLogin()) return;
   try {
+    // Set header target immediately so subsequent calls hit the chosen node
+    state.endpointId = id;
+    try {
+      localStorage.setItem(ENDPOINT_STORAGE_KEY, id);
+    } catch (_) {
+      /* ignore */
+    }
     const r = await api(`/api/endpoints/${encodeURIComponent(id)}/activate`, {
       method: "POST",
       body: "{}",
@@ -380,7 +412,10 @@ async function activateEndpoint(id) {
     } catch (_) {
       /* ignore */
     }
-    applyEndpoints({ items: state.endpoints.map((x) => ({ ...x, is_active: x.id === state.endpointId })), active_id: state.endpointId });
+    applyEndpoints({
+      items: state.endpoints.map((x) => ({ ...x, is_active: x.id === state.endpointId })),
+      active_id: state.endpointId,
+    });
     await loadEndpoints();
     await loadAll({ banner: true });
   } catch (e) {
@@ -2822,9 +2857,252 @@ async function loadSystemSettings() {
     if (ac) ac.checked = auto.auto_check_enabled !== false;
     const iv = $("#sys-auto-interval");
     if (iv) iv.value = String(auto.auto_check_interval_hours || 6);
+    await loadRemoteSettings();
   } catch (e) {
     const st = $("#sys-settings-status");
     if (st) st.textContent = e.message || "加载系统设置失败";
+  }
+}
+
+function applyRemoteSettingsUI(data) {
+  const st = data?.settings || data?.status || data?.remote || {};
+  const runtime = data?.runtime || {};
+  state.remote = { ...(data || {}), settings: st, runtime };
+  const en = $("#remote-enabled");
+  if (en) en.checked = !!st.enabled;
+  const role = $("#remote-role");
+  if (role) role.value = st.role || "";
+  const dn = $("#remote-display-name");
+  if (dn) dn.value = st.display_name || "";
+  const mode = $("#remote-agent-mode");
+  if (mode) mode.value = st.agent_mode || "collab";
+  const pub = $("#remote-public-url");
+  if (pub) pub.value = st.public_base_url || "";
+  const curl = $("#remote-controller-url");
+  if (curl && st.controller_base_url) curl.value = st.controller_base_url;
+
+  const show = !!st.enabled;
+  const isCtrl = st.role === "controller";
+  const isAgent = st.role === "agent";
+  const ctrlPanel = $("#remote-controller-panel");
+  const agentPanel = $("#remote-agent-panel");
+  if (ctrlPanel) ctrlPanel.hidden = !(show && isCtrl);
+  if (agentPanel) agentPanel.hidden = !(show && isAgent);
+
+  const hint = $("#remote-banner-hint");
+  if (hint) {
+    if (!st.enabled) {
+      hint.textContent = "远程模式关闭。开启后可选主控或被控（哪吒同款拨出，不开 Docker 端口）。";
+    } else if (isCtrl) {
+      const n = (data?.status?.sessions || st.sessions || []).length;
+      const on = data?.status?.online_count ?? 0;
+      hint.textContent = `主控端 · 状态 ${st.status || "idle"} · 已配对 ${n} · 在线 ${on}`;
+    } else if (isAgent) {
+      const conn = runtime.connected ? "已连接主控" : runtime.running ? "连接中…" : "未连接";
+      const err = runtime.last_error ? ` · ${runtime.last_error}` : "";
+      hint.textContent = `被控端 · ${conn}${err}`;
+    } else {
+      hint.textContent = "请选择本机角色：主控端或被控端";
+    }
+  }
+  const agSt = $("#remote-agent-status");
+  if (agSt && isAgent) {
+    if (runtime.connected) agSt.textContent = `已连接 · ${st.active_peer_name || "主控"}`;
+    else if (runtime.running) agSt.textContent = "正在连接…";
+    else agSt.textContent = runtime.last_error || "未连接";
+  }
+  renderRemoteSessions(data?.status?.sessions || data?.remote?.sessions || []);
+}
+
+function renderRemoteSessions(sessions) {
+  const tbody = $("#remote-session-rows");
+  if (!tbody) return;
+  const items = sessions || [];
+  if (!items.length) {
+    tbody.innerHTML = `<tr><td colspan="4" class="muted">暂无已配对节点</td></tr>`;
+    return;
+  }
+  tbody.innerHTML = "";
+  items.forEach((s) => {
+    const tr = document.createElement("tr");
+    const sid = s.session_id || s.id;
+    tr.innerHTML = `
+      <td class="cell-text"><strong>${escapeHtml(s.peer_name || s.name || sid)}</strong>
+        <div class="muted small mono">${escapeHtml(String(sid).slice(0, 12))}…</div></td>
+      <td class="col-status">${escapeHtml(s.mode || "collab")}</td>
+      <td class="col-status">${s.online ? '<span class="pill running">在线</span>' : '<span class="pill">离线</span>'}</td>
+      <td class="col-actions actions"></td>`;
+    const actions = tr.querySelector(".actions");
+    fillActionGroup(
+      actions,
+      [
+        {
+          label: "切换",
+          primary: true,
+          fn: () => activateEndpoint(`remote:${sid}`),
+        },
+        { label: "断开", danger: true, fn: () => disconnectRemoteSession(sid) },
+      ],
+      []
+    );
+    tbody.appendChild(tr);
+  });
+}
+
+async function loadRemoteSettings() {
+  try {
+    const r = await api("/api/remote/settings");
+    applyRemoteSettingsUI(r);
+    return r;
+  } catch (e) {
+    // older builds without remote API
+    const st = $("#remote-settings-status");
+    if (st && String(e.message || "").includes("404")) {
+      st.textContent = "";
+      return null;
+    }
+    if (st) st.textContent = e.message || "加载远程设置失败";
+    return null;
+  }
+}
+
+async function saveRemoteSettings() {
+  if (!requireLogin()) return;
+  const body = {
+    enabled: !!$("#remote-enabled")?.checked,
+    role: $("#remote-role")?.value || "",
+    agent_mode: $("#remote-agent-mode")?.value || "collab",
+    display_name: ($("#remote-display-name")?.value || "").trim(),
+    public_base_url: ($("#remote-public-url")?.value || "").trim(),
+    controller_base_url: ($("#remote-controller-url")?.value || "").trim(),
+  };
+  const stEl = $("#remote-settings-status");
+  try {
+    if (stEl) stEl.textContent = "保存中…";
+    const r = await api("/api/remote/settings", { method: "PUT", body: JSON.stringify(body) });
+    if (stEl) stEl.textContent = r.message || "已保存";
+    applyRemoteSettingsUI(r);
+    await loadEndpoints();
+  } catch (e) {
+    if (stEl) stEl.textContent = e.message || "保存失败";
+  }
+}
+
+async function createRemotePair() {
+  if (!requireLogin()) return;
+  try {
+    const r = await api("/api/remote/pair", {
+      method: "POST",
+      body: JSON.stringify({
+        controller_name: ($("#remote-display-name")?.value || "").trim() || "主控",
+      }),
+    });
+    const box = $("#remote-pair-box");
+    if (box) box.hidden = false;
+    const codeEl = $("#remote-pair-code");
+    if (codeEl) codeEl.textContent = r.pair_code || "";
+    const msg = $("#remote-pair-msg");
+    if (msg) msg.textContent = r.message || "";
+    let left = Number(r.expires_in || 60);
+    const ttl = $("#remote-pair-ttl");
+    if (state.remotePairTimer) clearInterval(state.remotePairTimer);
+    const tick = () => {
+      if (ttl) ttl.textContent = left > 0 ? `${left}s` : "已过期";
+      if (left <= 0) {
+        clearInterval(state.remotePairTimer);
+        state.remotePairTimer = null;
+        return;
+      }
+      left -= 1;
+    };
+    tick();
+    state.remotePairTimer = setInterval(tick, 1000);
+    // poll pair status + endpoints while waiting
+    const codeId = r.code_id;
+    const poll = setInterval(async () => {
+      try {
+        const ps = await api(`/api/remote/pair?code_id=${encodeURIComponent(codeId || "")}`);
+        if (ps.status === "used") {
+          clearInterval(poll);
+          await loadRemoteSettings();
+          await loadEndpoints();
+        }
+        if (ps.status === "expired" || left <= 0) clearInterval(poll);
+      } catch (_) {
+        clearInterval(poll);
+      }
+    }, 2000);
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function connectRemoteAgent() {
+  if (!requireLogin()) return;
+  const controller_base_url = ($("#remote-controller-url")?.value || "").trim();
+  const pair_code = ($("#remote-pair-input")?.value || "").trim();
+  if (!controller_base_url || !pair_code) {
+    alert("请填写主控地址与配对凭证");
+    return;
+  }
+  const stEl = $("#remote-agent-status");
+  try {
+    if (stEl) stEl.textContent = "连接中…";
+    const r = await api("/api/remote/agent/connect", {
+      method: "POST",
+      body: JSON.stringify({
+        controller_base_url,
+        pair_code,
+        agent_name: ($("#remote-display-name")?.value || "").trim() || "被控",
+        mode: $("#remote-agent-mode")?.value || "collab",
+      }),
+    });
+    if (stEl) stEl.textContent = r.message || "连接中…";
+    // poll runtime a few times
+    let n = 0;
+    const t = setInterval(async () => {
+      n += 1;
+      await loadRemoteSettings();
+      if (state.remote?.runtime?.connected || n > 15) clearInterval(t);
+    }, 1500);
+  } catch (e) {
+    if (stEl) stEl.textContent = e.message || "连接失败";
+    alert(e.message || String(e));
+  }
+}
+
+async function disconnectRemoteAgent() {
+  if (!requireLogin()) return;
+  try {
+    await api("/api/remote/agent/disconnect", { method: "POST", body: "{}" });
+    await loadRemoteSettings();
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function disconnectRemoteSession(sessionId) {
+  if (!requireLogin()) return;
+  if (!sessionId) return;
+  if (!confirm("断开该远程节点？被控需重新配对。")) return;
+  try {
+    await api(`/api/remote/sessions/${encodeURIComponent(sessionId)}/disconnect`, {
+      method: "POST",
+      body: "{}",
+    });
+    if (String(state.endpointId || "").includes(sessionId)) {
+      state.endpointId = "";
+      try {
+        localStorage.removeItem(ENDPOINT_STORAGE_KEY);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    await loadRemoteSettings();
+    await loadEndpoints();
+    await loadAll({ banner: true });
+  } catch (e) {
+    alert(e.message || String(e));
   }
 }
 
@@ -3097,6 +3375,31 @@ $("#btn-save-sys-settings")?.addEventListener("click", async () => {
   } catch (e) {
     $("#sys-settings-status").textContent = e.message || "保存失败";
   }
+});
+
+$("#btn-remote-save")?.addEventListener("click", () => saveRemoteSettings());
+$("#btn-remote-pair")?.addEventListener("click", () => createRemotePair());
+$("#btn-remote-refresh-sessions")?.addEventListener("click", async () => {
+  await loadRemoteSettings();
+  await loadEndpoints();
+});
+$("#btn-remote-connect")?.addEventListener("click", () => connectRemoteAgent());
+$("#btn-remote-disconnect")?.addEventListener("click", () => disconnectRemoteAgent());
+$("#remote-enabled")?.addEventListener("change", () => {
+  const on = !!$("#remote-enabled")?.checked;
+  const role = $("#remote-role")?.value || "";
+  const ctrlPanel = $("#remote-controller-panel");
+  const agentPanel = $("#remote-agent-panel");
+  if (ctrlPanel) ctrlPanel.hidden = !(on && role === "controller");
+  if (agentPanel) agentPanel.hidden = !(on && role === "agent");
+});
+$("#remote-role")?.addEventListener("change", () => {
+  const on = !!$("#remote-enabled")?.checked;
+  const role = $("#remote-role")?.value || "";
+  const ctrlPanel = $("#remote-controller-panel");
+  const agentPanel = $("#remote-agent-panel");
+  if (ctrlPanel) ctrlPanel.hidden = !(on && role === "controller");
+  if (agentPanel) agentPanel.hidden = !(on && role === "agent");
 });
 
 $("#btn-image-pull").addEventListener("click", async () => {

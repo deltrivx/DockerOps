@@ -290,9 +290,19 @@ docker compose --profile takeover up -d
 | 启停 / 重启 / 暂停 / 拉镜像 | 登录 |
 | 删除 / prune / 建删网络卷 / compose up-down / 模板重建 / Adopt | 登录 + `TAKEOVER=true` |
 
-### 远程 Docker：域名 + API（推荐方案）
+### 远程模式（v0.7 · 哪吒同款拨出，推荐）
 
-DockerOps 通过 **系统设置 → Docker 端点** 连接多台引擎。`docker_host` 使用 Docker SDK 协议，**不是**在浏览器里直接调远程域名，而是 DockerOps 服务端代连：
+**不需要**开放 Docker Engine 端口（2375/2376）。两台 NAS 各装 DockerOps：
+
+1. **主控端**（例如 Unraid）：系统设置 → 远程模式 → 开启 → 角色选「主控端」→ 保存 → **生成 60 秒凭证**  
+2. **被控端**（例如飞牛）：远程模式 → 开启 → 角色选「被控端」→ 填写主控 DockerOps 的 **域名或 IP**（能打开网页的那个，如 `http://192.168.31.2:9080`）→ 粘贴凭证 → **连接主控**  
+3. 被控 **主动拨出** WebSocket 到主控；主控顶栏端点出现「远程 · 节点」，切换后容器/镜像/更新检测经 RPC 代理到被控  
+
+一期为 **协同**（双方可操作）。托管锁定为二期。
+
+### 远程 Docker Engine 端点（可选，域名 + API）
+
+DockerOps 仍可通过 **系统设置 → Docker 端点** 直连引擎。`docker_host` 使用 Docker SDK 协议，**不是**在浏览器里直接调远程域名，而是 DockerOps 服务端代连：
 
 | 场景 | Host 示例 | 说明 |
 |------|-----------|------|
@@ -340,6 +350,10 @@ DockerOps 通过 **系统设置 → Docker 端点** 连接多台引擎。`docker
 | `GET` | `/api/doctor` · `/api/monitor/report` · `/api/ops/*` | 诊断 / 监控 / 安全更新 |
 | `GET\|POST` | `/api/compose/projects...` | Compose 项目 |
 | `GET\|POST` | `/api/unraid/templates...` · `/api/unraid/adopt/{id}` | Unraid 模板 |
+| `GET\|PUT` | `/api/remote/settings` · `/api/remote/status` | 远程模式设置 / 状态 |
+| `POST\|GET` | `/api/remote/pair` | 主控生成/查询 60s 配对凭证 |
+| `POST` | `/api/remote/agent/connect` · `disconnect` | 被控拨出连接 / 断开 |
+| `WS` | `/api/remote/agent/ws` | 主控 hub（被控拨入） |
 
 完整列表见 Swagger：`/docs`。
 

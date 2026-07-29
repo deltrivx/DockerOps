@@ -117,10 +117,41 @@ from update_detect import (
     set_update_auto_settings,
     start_update_auto_check_thread,
 )
+from remote import (
+    create_pair_code,
+    get_pair_status,
+    get_remote_settings,
+    get_session_by_token,
+    is_agent_online,
+    list_remote_sessions,
+    normalize_base_url,
+    parse_remote_endpoint_id,
+    public_remote_status,
+    public_settings_view,
+    redeem_pair_code,
+    register_agent_ws,
+    remote_endpoint_id,
+    resolve_rpc_response,
+    revoke_session,
+    rpc_to_agent,
+    set_remote_settings,
+    unregister_agent_ws,
+)
+from remote_agent import agent_runtime_state, start_agent_dial, stop_agent_dial
 
 APP_DIR = Path(__file__).resolve().parent
-VERSION = "0.6.5"
+VERSION = "0.7.0"
 CHANGELOG = [
+    {
+        "version": "0.7.0",
+        "date": "2026-07-29",
+        "items": [
+            "远程模式一期（哪吒同款拨出）：主控/被控协同，60 秒配对凭证",
+            "被控主动连主控 DockerOps 域名/IP（WSS），不开放 Docker 2375/2376",
+            "主控顶栏端点可选在线远程节点；容器/镜像/更新等经 RPC 代理到被控",
+            "系统设置：远程模式开关、角色、生成凭证、被控填写主控地址连接",
+        ],
+    },
     {
         "version": "0.6.5",
         "date": "2026-07-29",
@@ -514,7 +545,28 @@ class SystemSettingsBody(BaseModel):
     auto_check_interval_hours: int | None = Field(default=None, ge=1, le=48)
 
 
+class RemoteSettingsBody(BaseModel):
+    enabled: bool | None = None
+    role: str | None = None  # controller | agent | ""
+    agent_mode: str | None = None  # collab | managed
+    display_name: str | None = None
+    controller_base_url: str | None = None
+    public_base_url: str | None = None
+
+
+class RemotePairBody(BaseModel):
+    controller_name: str | None = None
+
+
+class RemoteAgentConnectBody(BaseModel):
+    controller_base_url: str = Field(..., min_length=3, max_length=512)
+    pair_code: str = Field(..., min_length=8, max_length=128)
+    agent_name: str | None = None
+    mode: str | None = "collab"
+
+
 META_SYSTEM_PROXY = "system_proxy"
+META_ACTIVE_REMOTE = "active_remote_endpoint"
 
 
 def _load_stored_proxy() -> dict[str, str]:
@@ -645,20 +697,131 @@ def _test_endpoint_conn(ep: dict[str, Any]) -> dict[str, Any]:
         reset_request_endpoint(token)
 
 
+def _is_remote_api_path(path: str) -> bool:
+    """Paths that can be proxied to a dialed-in agent."""
+    if not path.startswith("/api/"):
+        return False
+    # never proxy remote-control / auth / static admin APIs
+    skip_prefixes = (
+        "/api/remote",
+        "/api/auth",
+        "/api/endpoints",
+        "/api/system/settings",
+        "/api/prefs",
+        "/api/setup",
+        "/api/login",
+        "/api/logout",
+        "/api/changelog",
+        "/api/version",
+        "/api/compose",
+        "/api/unraid",
+    )
+    return not any(path == p or path.startswith(p + "/") for p in skip_prefixes)
+
+
 @app.middleware("http")
 async def endpoint_context_middleware(request: Request, call_next):
-    """Bind X-DockerOps-Endpoint / ?endpoint= for the request lifetime."""
+    """Bind X-DockerOps-Endpoint / ?endpoint= for the request lifetime.
+
+    Remote agent sessions use id ``remote:{session_id}`` and are proxied over
+    the agent dial-out WebSocket (no Docker Engine port).
+    """
     eid = (
         request.headers.get("X-DockerOps-Endpoint")
         or request.query_params.get("endpoint")
         or ""
     ).strip() or None
+
+    # Persist active remote selection in meta when client sends remote:* header
+    if eid and parse_remote_endpoint_id(eid):
+        try:
+            set_meta(META_ACTIVE_REMOTE, eid)
+        except Exception:
+            pass
+    elif eid:
+        # local/tcp endpoint selection clears remote active marker for this request path
+        pass
+
+    remote_sid = parse_remote_endpoint_id(eid) if eid else None
+    if remote_sid:
+        # Do not bind docker client; proxy instead for supported API paths
+        if (
+            request.method in ("GET", "POST", "PUT", "PATCH", "DELETE")
+            and _is_remote_api_path(request.url.path)
+        ):
+            try:
+                body = None
+                if request.method in ("POST", "PUT", "PATCH"):
+                    raw = await request.body()
+                    if raw:
+                        try:
+                            body = json.loads(raw)
+                        except Exception:
+                            body = {"_raw": raw.decode("utf-8", errors="replace")}
+                query = {k: v for k, v in request.query_params.multi_items()}
+                result = await rpc_to_agent(
+                    remote_sid,
+                    method=request.method,
+                    path=request.url.path,
+                    body=body,
+                    query=query,
+                )
+                # agent replies: {type,id,ok,status,body}
+                if isinstance(result, dict) and "body" in result:
+                    payload = result.get("body")
+                    status = int(result.get("status") or (200 if result.get("ok", True) else 500))
+                elif isinstance(result, dict):
+                    status = int(result.get("status") or (200 if result.get("ok", True) else 500))
+                    payload = {k: v for k, v in result.items() if k != "status"}
+                else:
+                    payload, status = result, 200
+                if isinstance(payload, dict) and payload.get("status") and "ok" in payload:
+                    # execute_local_rpc may embed HTTP-ish status
+                    try:
+                        st2 = int(payload.get("status"))
+                        if 400 <= st2 < 600:
+                            status = st2
+                    except Exception:
+                        pass
+                resp = JSONResponse(content=payload, status_code=status if 100 <= status < 600 else 502)
+                resp.headers["X-DockerOps-Endpoint"] = eid
+                resp.headers["X-DockerOps-Remote"] = "1"
+                return resp
+            except RuntimeError as e:
+                return JSONResponse(
+                    status_code=502,
+                    content={"ok": False, "detail": str(e)},
+                    headers={"X-DockerOps-Endpoint": eid, "X-DockerOps-Remote": "1"},
+                )
+            except Exception as e:
+                return JSONResponse(
+                    status_code=502,
+                    content={"ok": False, "detail": f"远程代理失败: {e}"},
+                    headers={"X-DockerOps-Endpoint": eid, "X-DockerOps-Remote": "1"},
+                )
+        # non-proxied path with remote endpoint: fall through without docker bind
+        token = set_request_endpoint(None)
+        try:
+            response = await call_next(request)
+            response.headers["X-DockerOps-Endpoint"] = eid
+            response.headers["X-DockerOps-Remote"] = "1"
+            return response
+        finally:
+            reset_request_endpoint(token)
+
     if eid:
         ep = get_endpoint(eid)
         if not ep or not ep.get("enabled"):
             eid = None
     if not eid:
         try:
+            # prefer stored remote active only if still online
+            stored_remote = get_meta(META_ACTIVE_REMOTE)
+            if stored_remote and parse_remote_endpoint_id(stored_remote):
+                sid = parse_remote_endpoint_id(stored_remote)
+                if sid and is_agent_online(sid):
+                    # Re-enter remote path via header would need client; use local default here
+                    pass
             eid = get_active_endpoint_id()
         except Exception:
             eid = None
@@ -716,6 +879,24 @@ def _startup() -> None:
     )
     try:
         start_update_auto_check_thread()
+    except Exception:
+        pass
+    # Resume agent dial-out if this instance was configured as agent
+    try:
+        st = get_remote_settings()
+        if (
+            st.get("enabled")
+            and st.get("role") == "agent"
+            and st.get("controller_base_url")
+            and st.get("_session_token")
+            and st.get("active_session_id")
+        ):
+            start_agent_dial(
+                base_url=st["controller_base_url"],
+                pair_code="",  # resume path
+                agent_name=st.get("display_name") or "被控",
+                mode=st.get("agent_mode") or "collab",
+            )
     except Exception:
         pass
 
@@ -1718,7 +1899,47 @@ def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[s
 @app.get("/api/endpoints")
 def api_endpoints_list(actor: OptionalUser = None) -> dict[str, Any]:
     active_id = get_active_endpoint_id()
+    # client may keep remote:* in localStorage; surface it if still valid
+    stored_remote = get_meta(META_ACTIVE_REMOTE) or ""
     items = [public_endpoint(ep, active_id=active_id) for ep in list_endpoints()]
+    # Merge online/offline remote agent sessions (controller side)
+    try:
+        st = get_remote_settings()
+        if st.get("enabled") and st.get("role") == "controller":
+            for s in list_remote_sessions():
+                rid = remote_endpoint_id(s["session_id"])
+                items.append(
+                    {
+                        "id": rid,
+                        "name": f"远程 · {s.get('peer_name') or '节点'}",
+                        "docker_host": s.get("docker_host") or f"remote://{s['session_id'][:8]}",
+                        "tls_enabled": False,
+                        "is_default": False,
+                        "is_active": stored_remote == rid,
+                        "is_local": False,
+                        "enabled": True,
+                        "kind": "remote_agent",
+                        "online": bool(s.get("online")),
+                        "mode": s.get("mode") or "collab",
+                        "notes": "DockerOps 远程节点（拨出，无 Docker 端口）",
+                        "capabilities": s.get("capabilities")
+                        or {
+                            "local": False,
+                            "resources": True,
+                            "console": False,
+                            "compose": False,
+                            "unraid": False,
+                            "update_detect": True,
+                            "remote": True,
+                        },
+                    }
+                )
+            if stored_remote and any(i["id"] == stored_remote for i in items):
+                active_id = stored_remote
+                for i in items:
+                    i["is_active"] = i["id"] == active_id
+    except Exception:
+        pass
     return {
         "ok": True,
         "items": items,
@@ -1798,12 +2019,40 @@ def api_endpoints_delete(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
 
 @app.post("/api/endpoints/{endpoint_id}/activate")
 def api_endpoints_activate(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
+    remote_sid = parse_remote_endpoint_id(endpoint_id)
+    if remote_sid:
+        sessions = {s["session_id"]: s for s in list_remote_sessions()}
+        s = sessions.get(remote_sid)
+        if not s:
+            raise HTTPException(status_code=404, detail="远程节点不存在或已断开")
+        set_meta(META_ACTIVE_REMOTE, endpoint_id)
+        audit("endpoint_activate", actor=actor, detail={"id": endpoint_id, "kind": "remote_agent"})
+        return {
+            "ok": True,
+            "item": {
+                "id": endpoint_id,
+                "name": f"远程 · {s.get('peer_name') or '节点'}",
+                "docker_host": s.get("docker_host"),
+                "is_active": True,
+                "is_local": False,
+                "kind": "remote_agent",
+                "online": bool(s.get("online")),
+                "capabilities": s.get("capabilities") or {},
+            },
+            "active_id": endpoint_id,
+            "message": f"已切换到远程节点「{s.get('peer_name') or remote_sid[:8]}」"
+            + ("（在线）" if s.get("online") else "（离线，操作将失败）"),
+        }
     try:
         ep = set_active_endpoint_id(endpoint_id)
     except KeyError:
         raise HTTPException(status_code=404, detail="端点不存在") from None
     except ValueError:
         raise HTTPException(status_code=400, detail="端点已禁用") from None
+    try:
+        set_meta(META_ACTIVE_REMOTE, "")
+    except Exception:
+        pass
     audit("endpoint_activate", actor=actor, detail={"id": endpoint_id, "name": ep.get("name")})
     return {
         "ok": True,
@@ -1814,7 +2063,27 @@ def api_endpoints_activate(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
 
 
 @app.post("/api/endpoints/{endpoint_id}/test")
-def api_endpoints_test(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
+async def api_endpoints_test(endpoint_id: str, actor: AuthUser) -> dict[str, Any]:
+    remote_sid = parse_remote_endpoint_id(endpoint_id)
+    if remote_sid:
+        if not is_agent_online(remote_sid):
+            return {
+                "ok": False,
+                "docker": {"ok": False, "error": "远程节点不在线"},
+                "message": "远程节点不在线",
+            }
+        try:
+            result = await rpc_to_agent(remote_sid, method="GET", path="/api/health")
+            body = result.get("body") if isinstance(result, dict) and "body" in result else result
+            ok = bool((body or {}).get("ok", True)) if isinstance(body, dict) else True
+            return {
+                "ok": ok,
+                "docker": (body or {}).get("docker") if isinstance(body, dict) else body,
+                "message": "远程节点连通正常" if ok else "远程节点异常",
+                "remote": True,
+            }
+        except Exception as e:
+            return {"ok": False, "docker": {"ok": False, "error": str(e)}, "message": str(e)}
     ep = get_endpoint(endpoint_id)
     if not ep:
         raise HTTPException(status_code=404, detail="端点不存在")
@@ -1941,6 +2210,291 @@ def api_unraid_adopt(container_id: str, actor: AuthUser) -> dict[str, Any]:
     _takeover_or_403()
     _require_local_feature("Unraid 模板")
     return adopt_to_unraid(container_id, actor=actor)
+
+
+# ── Remote mode (Nezha-style dial-out) ───────────────────────
+
+
+@app.get("/api/remote/status")
+def api_remote_status(actor: OptionalUser = None) -> dict[str, Any]:
+    st = public_remote_status()
+    runtime = agent_runtime_state()
+    return {
+        "ok": True,
+        "remote": st,
+        "runtime": runtime,
+        "viewer": actor,
+    }
+
+
+@app.get("/api/remote/settings")
+def api_remote_settings_get(actor: AuthUser) -> dict[str, Any]:
+    return {
+        "ok": True,
+        "settings": public_settings_view(),
+        "status": public_remote_status(),
+        "runtime": agent_runtime_state(),
+    }
+
+
+@app.put("/api/remote/settings")
+def api_remote_settings_put(body: RemoteSettingsBody, actor: AuthUser) -> dict[str, Any]:
+    patch = body.model_dump(exclude_none=True)
+    if "controller_base_url" in patch and patch["controller_base_url"]:
+        try:
+            patch["controller_base_url"] = normalize_base_url(patch["controller_base_url"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    if "public_base_url" in patch and patch["public_base_url"]:
+        try:
+            patch["public_base_url"] = normalize_base_url(patch["public_base_url"])
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+    prev = get_remote_settings()
+    cur = set_remote_settings(patch, actor=actor)
+    # turning off → stop agent dial + clear waiting
+    if prev.get("enabled") and not cur.get("enabled"):
+        stop_agent_dial()
+        if prev.get("active_session_id"):
+            try:
+                revoke_session(prev["active_session_id"], actor=actor)
+            except Exception:
+                pass
+        try:
+            set_meta(META_ACTIVE_REMOTE, "")
+        except Exception:
+            pass
+    # role switch away from agent
+    if cur.get("role") != "agent":
+        stop_agent_dial()
+    return {
+        "ok": True,
+        "settings": public_settings_view(cur),
+        "status": public_remote_status(),
+        "message": "远程模式设置已保存",
+    }
+
+
+@app.post("/api/remote/pair")
+def api_remote_pair_create(body: RemotePairBody, actor: AuthUser) -> dict[str, Any]:
+    st = get_remote_settings()
+    if not st.get("enabled") or st.get("role") != "controller":
+        raise HTTPException(status_code=400, detail="请先开启远程模式并选择「主控端」")
+    name = (body.controller_name or st.get("display_name") or "主控").strip()
+    result = create_pair_code(controller_name=name, created_by=actor or "admin")
+    return result
+
+
+@app.get("/api/remote/pair")
+def api_remote_pair_status(
+    actor: AuthUser,
+    code_id: str | None = Query(default=None),
+) -> dict[str, Any]:
+    return get_pair_status(code_id)
+
+
+@app.post("/api/remote/agent/connect")
+def api_remote_agent_connect(body: RemoteAgentConnectBody, actor: AuthUser) -> dict[str, Any]:
+    st = get_remote_settings()
+    if not st.get("enabled") or st.get("role") != "agent":
+        raise HTTPException(status_code=400, detail="请先开启远程模式并选择「被控端」")
+    try:
+        base = normalize_base_url(body.controller_base_url)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    mode = (body.mode or st.get("agent_mode") or "collab").lower()
+    if mode not in ("collab", "managed"):
+        mode = "collab"
+    agent_name = (body.agent_name or st.get("display_name") or "被控").strip() or "被控"
+    set_remote_settings(
+        {
+            "controller_base_url": base,
+            "agent_mode": mode,
+            "display_name": agent_name,
+            "status": "waiting_pair",
+        },
+        actor=actor,
+    )
+    result = start_agent_dial(
+        base_url=base,
+        pair_code=body.pair_code.strip(),
+        agent_name=agent_name,
+        mode=mode,
+    )
+    audit(
+        "remote_agent_connect",
+        actor=actor,
+        detail={"controller": base, "mode": mode},
+    )
+    return {
+        "ok": True,
+        "message": result.get("message") or "正在连接主控…",
+        "runtime": agent_runtime_state(),
+        "settings": public_settings_view(),
+    }
+
+
+@app.post("/api/remote/agent/disconnect")
+def api_remote_agent_disconnect(actor: AuthUser) -> dict[str, Any]:
+    stop_agent_dial()
+    st = get_remote_settings()
+    sid = st.get("active_session_id") or ""
+    set_remote_settings(
+        {
+            "status": "idle",
+            "active_session_id": "",
+            "active_peer_name": "",
+            "_session_token": None,
+        },
+        actor=actor,
+    )
+    audit("remote_agent_disconnect", actor=actor, detail={"session_id": sid})
+    return {"ok": True, "message": "已断开与主控的连接", "runtime": agent_runtime_state()}
+
+
+@app.post("/api/remote/sessions/{session_id}/disconnect")
+def api_remote_session_disconnect(session_id: str, actor: AuthUser) -> dict[str, Any]:
+    ok = revoke_session(session_id, actor=actor)
+    if not ok:
+        raise HTTPException(status_code=404, detail="会话不存在")
+    stored = get_meta(META_ACTIVE_REMOTE) or ""
+    if stored == remote_endpoint_id(session_id):
+        set_meta(META_ACTIVE_REMOTE, "")
+    return {"ok": True, "message": "已断开远程节点"}
+
+
+@app.get("/api/remote/sessions")
+def api_remote_sessions_list(actor: AuthUser) -> dict[str, Any]:
+    return {"ok": True, "items": list_remote_sessions()}
+
+
+@app.websocket("/api/remote/agent/ws")
+async def ws_remote_agent_hub(websocket: WebSocket) -> None:
+    """
+    Controller hub: agents dial in here (Nezha-style).
+    First message: hello{pair_code,...} or resume{session_id,session_token}.
+    """
+    await websocket.accept()
+    session_id: str | None = None
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=30)
+        msg = json.loads(raw)
+    except Exception:
+        try:
+            await websocket.send_text(json.dumps({"type": "error", "detail": "握手超时或无效"}))
+        except Exception:
+            pass
+        await websocket.close(code=4400)
+        return
+
+    typ = (msg.get("type") or "").lower()
+    try:
+        if typ == "hello":
+            pair_code = msg.get("pair_code") or ""
+            agent_name = (msg.get("agent_name") or "被控").strip() or "被控"
+            mode = msg.get("mode") or "collab"
+            result = redeem_pair_code(
+                pair_code,
+                agent_name=agent_name,
+                mode=mode,
+                agent_base_hint=msg.get("agent_base_url") or "",
+            )
+            session_id = result["session_id"]
+            register_agent_ws(session_id, websocket)
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "welcome",
+                        "session_id": session_id,
+                        "session_token": result["session_token"],
+                        "mode": result["mode"],
+                        "controller_name": result.get("controller_name") or "主控",
+                        "expires_at": result.get("expires_at"),
+                        "message": "配对成功，已接入主控",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        elif typ == "resume":
+            token = msg.get("session_token") or ""
+            want_sid = msg.get("session_id") or ""
+            sess = get_session_by_token(token)
+            if not sess:
+                await websocket.send_text(
+                    json.dumps({"type": "error", "detail": "会话无效或已撤销，请重新配对"})
+                )
+                await websocket.close(code=4401)
+                return
+            if want_sid and want_sid != sess["session_id"]:
+                await websocket.send_text(
+                    json.dumps({"type": "error", "detail": "会话 ID 不匹配"})
+                )
+                await websocket.close(code=4401)
+                return
+            session_id = sess["session_id"]
+            register_agent_ws(session_id, websocket)
+            meta = {}
+            try:
+                meta = json.loads(sess.get("meta") or "{}")
+            except Exception:
+                pass
+            await websocket.send_text(
+                json.dumps(
+                    {
+                        "type": "resumed",
+                        "session_id": session_id,
+                        "session_token": token,
+                        "mode": sess.get("mode") or "collab",
+                        "controller_name": meta.get("controller_name") or "主控",
+                        "message": "已恢复连接",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        else:
+            await websocket.send_text(
+                json.dumps({"type": "error", "detail": "首包须为 hello 或 resume"})
+            )
+            await websocket.close(code=4400)
+            return
+    except ValueError as e:
+        await websocket.send_text(json.dumps({"type": "error", "detail": str(e)}))
+        await websocket.close(code=4403)
+        return
+    except Exception as e:
+        await websocket.send_text(json.dumps({"type": "error", "detail": str(e)}))
+        await websocket.close(code=1011)
+        return
+
+    try:
+        while True:
+            raw = await websocket.receive_text()
+            try:
+                data = json.loads(raw)
+            except Exception:
+                continue
+            mtype = data.get("type")
+            if mtype == "pong":
+                if session_id:
+                    from remote import touch_session
+
+                    touch_session(session_id, online=True)
+                continue
+            if mtype == "ping":
+                await websocket.send_text(json.dumps({"type": "pong", "t": time.time()}))
+                continue
+            if mtype == "rpc_result":
+                resolve_rpc_response(data)
+                continue
+            if mtype == "bye":
+                break
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+    finally:
+        if session_id:
+            unregister_agent_ws(session_id, websocket)
 
 
 @app.get("/", response_class=HTMLResponse)

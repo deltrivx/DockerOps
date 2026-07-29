@@ -118,6 +118,12 @@ def init_db() -> None:
         ensure_default_endpoint()
     except Exception:
         pass
+    try:
+        from remote import ensure_remote_tables
+
+        ensure_remote_tables()
+    except Exception:
+        pass
 
 
 def add_ops_record(
