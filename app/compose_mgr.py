@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
@@ -27,13 +28,27 @@ COMPOSE_FILE_NAMES = (
 
 
 def list_projects() -> list[dict[str, Any]]:
+    """Discover compose projects.
+
+    Primary path (engine-level label reverse lookup): a container carrying
+    ``com.docker.compose.project`` is compose-managed regardless of who created
+    it, so projects are derived from the engine itself instead of from mounted
+    directories. This is what makes projects deployed outside DockerOps visible.
+
+    Fallback (directory scan): only fills in projects whose containers are gone
+    or unlabelled; it can never be the primary source because a project whose
+    directory is not mounted would be invisible.
+
+    Every project carries ``config_reachable`` so the UI can tell a project that
+    can actually be operated on from one that is only discovered.
+    """
     settings = get_settings()
     if not settings.compose_enabled:
         return []
 
     by_name: dict[str, dict[str, Any]] = {}
 
-    # From running/stopped containers labels
+    # ---- Primary: engine-level label reverse lookup -------------------------
     try:
         containers = list_containers(all_containers=True)
     except Exception:
@@ -47,7 +62,7 @@ def list_projects() -> list[dict[str, Any]]:
             project,
             {
                 "name": project,
-                "source": "labels",
+                "source": "engine",
                 "working_dir": c.get("compose_working_dir"),
                 "config_files": [],
                 "services": [],
@@ -82,12 +97,22 @@ def list_projects() -> list[dict[str, Any]]:
                 if part and part not in entry["config_files"]:
                     entry["config_files"].append(part)
 
-    # Scan configured project dirs
+    # ---- Fallback: directory scan ------------------------------------------
+    # Only surfaces projects the engine did not report (e.g. containers removed
+    # while the compose file is still on disk with a mounted directory).
     for base in settings.compose_dirs():
         if not base.is_dir():
             continue
         for compose_file in _find_compose_files(base):
             project = compose_file.parent.name
+            if project in by_name:
+                entry = by_name[project]
+                path = str(compose_file)
+                if path not in entry["config_files"]:
+                    entry["config_files"].append(path)
+                if entry.get("source") == "engine":
+                    entry["source"] = "engine+filesystem"
+                continue
             entry = by_name.setdefault(
                 project,
                 {
@@ -106,10 +131,58 @@ def list_projects() -> list[dict[str, Any]]:
                 entry["config_files"].append(path)
             if not entry.get("working_dir"):
                 entry["working_dir"] = str(compose_file.parent)
-            if entry.get("source") == "labels":
-                entry["source"] = "labels+filesystem"
+
+    # ---- Reachability annotation -------------------------------------------
+    for entry in by_name.values():
+        _annotate_reachability(entry)
 
     return sorted(by_name.values(), key=lambda x: x["name"])
+
+
+def _annotate_reachability(entry: dict[str, Any]) -> None:
+    """Mark whether the compose files are reachable from inside the container.
+
+    Engine-level discovery can list a project whose directory was never
+    mounted. Those are visible but not operable, so say so instead of failing
+    only when the user clicks.
+    """
+    files = [Path(p) for p in (entry.get("config_files") or [])]
+    existing = [p for p in files if p.is_file()]
+    entry["config_files_found"] = [str(p) for p in existing]
+    entry["config_reachable"] = bool(existing)
+    entry["config_writable"] = (
+        all(os.access(p, os.W_OK) and os.access(p.parent, os.W_OK) for p in existing)
+        if existing
+        else False
+    )
+
+    wd = entry.get("working_dir") or ""
+    entry["working_dir_reachable"] = bool(wd) and Path(wd).is_dir()
+    entry["working_dir_writable"] = entry["working_dir_reachable"] and os.access(
+        wd, os.W_OK
+    )
+
+    if entry["config_reachable"] and entry["working_dir_writable"]:
+        entry["read_only"] = False
+        entry["reachability_hint"] = ""
+        return
+
+    entry["read_only"] = True
+    if not entry.get("config_files"):
+        entry["reachability_hint"] = (
+            "未取得 Compose 配置文件路径（容器缺少 config_files 标签），"
+            "无法读取或修改该工程。"
+        )
+    elif not entry["config_reachable"]:
+        entry["reachability_hint"] = (
+            "Compose 目录未挂载进 DockerOps，当前仅能发现、无法操作。"
+            "如需接管，请把该目录挂载进容器并加入扫描目录。"
+        )
+    else:
+        entry["reachability_hint"] = (
+            "Compose 文件可读但目录不可写，当前仅能查看。"
+            "如需更新，请以读写方式挂载该目录。"
+        )
 
 
 def get_project(name: str) -> dict[str, Any] | None:

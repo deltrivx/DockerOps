@@ -11,3 +11,4 @@ bcrypt==4.0.1
 itsdangerous==2.2.0
 httpx==0.28.1
 websockets==15.0.1
+paramiko==3.5.1

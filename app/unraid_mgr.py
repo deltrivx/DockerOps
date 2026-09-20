@@ -10,17 +10,14 @@ from xml.dom import minidom
 
 from config import get_settings
 from db import add_ops_record
+import unraid_host
 from docker_client import (
     cleanup_superseded_images,
-    connect_network,
     container_image_id,
-    create_and_start,
     get_container,
     list_containers,
     pull_image,
     refresh_template_name_cache,
-    remove_container,
-    stop_container,
 )
 
 
@@ -202,7 +199,21 @@ def safe_update_unraid(
     recreate: bool = True,
     on_progress=None,
 ) -> dict[str, Any]:
-    """Template-driven safe update (Unraid semantics, not docker run string)."""
+    """Update a container through its Unraid template.
+
+    Unraid decides which template owns a container by reading
+    ``net.unraid.docker.managed``. Rebuilding by hand — stop, remove, then a
+    create call built from parsed template values — produces a container that
+    looks identical but has lost that label, so Unraid files it under "third
+    party" and the template stops working. Copying every value across does not
+    help; the label is only written by Unraid's own template path.
+
+    So the supported route is the host's own scripts:
+    ``update_container`` (pull, then recreate) or ``rebuild_container``
+    (recreate from what is on disk). When the host cannot be reached at all, the
+    update is reported as a pull-only partial rather than falling back to a
+    rebuild that would quietly break template ownership.
+    """
     settings = get_settings()
     if not settings.unraid_enabled:
         return {"ok": False, "message": "Unraid 模式未启用"}
@@ -218,25 +229,104 @@ def safe_update_unraid(
         )
         return {"ok": False, "record": rec, "message": f"未找到模板 {name}"}
 
-    _emit_progress(on_progress, {"event": "stage", "stage": "backup", "message": f"备份模板 {name}", "container": name})
+    _emit_progress(
+        on_progress,
+        {"event": "stage", "stage": "backup", "message": f"备份模板 {name}", "container": name},
+    )
     backup = backup_template(name, actor=actor)
     if not backup.get("ok"):
         _emit_progress(on_progress, {"event": "error", "message": "备份失败", "container": name})
         return {"ok": False, "message": "备份失败，已中止", "backup": backup}
 
-    # optional repository patch on XML
     target_image = repository or tpl.get("repository")
+
+    # Retarget the template before pulling: update_container reads <Repository>
+    # to decide what to pull, so a new tag takes effect only if written first.
     if repository and repository != tpl.get("repository"):
         try:
             settings.takeover_guard()
-            _patch_repository(Path(tpl["path"]), repository)
-            tpl = get_template(name) or tpl
-            target_image = repository
         except PermissionError as e:
             return {"ok": False, "message": str(e), "backup": backup}
+        patched = patch_template_repository(Path(tpl["path"]), repository)
+        if not patched.get("ok"):
+            return {"ok": False, "message": patched.get("message"), "backup": backup}
+        tpl = get_template(name) or tpl
+        target_image = repository
 
     if not target_image:
         return {"ok": False, "message": "模板缺少 Repository", "backup": backup}
+
+    if not recreate:
+        return _unraid_pull_only(
+            name, tpl, target_image, backup, actor, on_progress,
+            reason="调用方指定仅拉取",
+        )
+
+    try:
+        settings.takeover_guard()
+    except PermissionError as e:
+        return _unraid_pull_only(
+            name, tpl, target_image, backup, actor, on_progress, reason=str(e)
+        )
+
+    # ---- Preferred path: the host's own template scripts -------------------
+    executor = _resolve_executor()
+    scripts_ok, scripts_detail = unraid_host.script_available(executor)
+    if scripts_ok:
+        return _unraid_host_update(
+            name, tpl, target_image, backup, actor, on_progress, executor
+        )
+
+    rec = add_ops_record(
+        action="unraid_update",
+        target=name,
+        status="failed",
+        detail={"step": "host_scripts", "reason": scripts_detail},
+        actor=actor,
+    )
+    _emit_progress(
+        on_progress,
+        {"event": "error", "message": scripts_detail, "container": name},
+    )
+    return {
+        "ok": False,
+        "record": rec,
+        "backup": backup,
+        "host_scripts_available": False,
+        "message": (
+            f"{scripts_detail}"
+            "为避免容器脱离模板管理，本次不做重建。"
+            "请配置宿主机 SSH 通道（DOCKEROPS_SSH_HOST 等），"
+            "或在 Unraid Docker 页面手动点击更新。"
+        ),
+    }
+
+
+def _resolve_executor():
+    """Host executor for this request, or ``None`` when unreachable."""
+    try:
+        from host_exec import get_host_executor
+
+        return get_host_executor()
+    except Exception:
+        return None
+
+
+def _unraid_pull_only(
+    name: str,
+    tpl: dict[str, Any],
+    target_image: str,
+    backup: dict[str, Any],
+    actor: str | None,
+    on_progress,
+    *,
+    reason: str,
+) -> dict[str, Any]:
+    """Pull the image but leave the container alone."""
+    _emit_progress(
+        on_progress,
+        {"event": "stage", "stage": "pull", "message": f"拉取镜像 {target_image}", "container": name},
+    )
 
     def _pull_cb(chunk: dict[str, Any]) -> None:
         pd = chunk.get("progressDetail") or {}
@@ -259,30 +349,8 @@ def safe_update_unraid(
             },
         )
 
-    _emit_progress(
-        on_progress,
-        {"event": "stage", "stage": "pull", "message": f"拉取镜像 {target_image}", "container": name, "image": target_image},
-    )
     try:
         pull = pull_image(target_image, on_progress=_pull_cb)
-        pull_ok = True
-        pull_err = None
-    except Exception as e:
-        pull = {}
-        pull_ok = False
-        pull_err = str(e)
-
-    if not pull_ok:
-        rec = add_ops_record(
-            action="unraid_update",
-            target=name,
-            status="failed",
-            detail={"step": "pull", "error": pull_err, "backup": backup.get("backup_path")},
-            actor=actor,
-        )
-        return {"ok": False, "record": rec, "backup": backup, "message": f"拉镜像失败：{pull_err}"}
-
-    if not recreate:
         rec = add_ops_record(
             action="unraid_update",
             target=name,
@@ -296,163 +364,172 @@ def safe_update_unraid(
             "record": rec,
             "backup": backup,
             "pull": pull,
-            "message": "已备份并拉取；未重建容器",
-        }
-
-    try:
-        settings.takeover_guard()
-    except PermissionError as e:
-        rec = add_ops_record(
-            action="unraid_update",
-            target=name,
-            status="partial",
-            detail={
-                "step": "pull_only",
-                "reason": str(e),
-                "pull": pull,
-                "backup": backup.get("backup_path"),
-                "next_steps": [
-                    "镜像已拉取，但未重建容器（完整接管未开启）。",
-                    "开启 DOCKEROPS_TAKEOVER_ENABLED=true 后可由 DockerOps 自动 stop→remove→按模板重建，并清理旧镜像。",
-                    "或在 Unraid Docker 页对应用点击 Apply Update。",
-                ],
-            },
-            actor=actor,
-        )
-        return {
-            "ok": True,
-            "partial": True,
-            "record": rec,
-            "backup": backup,
-            "pull": pull,
-            "message": (
-                "已备份并拉取镜像；未重建容器（接管未开启）。"
-                "请开启完整接管后重试，或在 Unraid 原系统 Apply Update。"
-            ),
-        }
-
-    # Template-driven recreate
-    _emit_progress(
-        on_progress,
-        {"event": "stage", "stage": "recreate", "message": f"按模板重建 {name}", "container": name},
-    )
-    was_running = False
-    old = None
-    old_image_id: str | None = None
-    try:
-        old = get_container(name)
-        was_running = (old.get("status") or "").lower() == "running"
-        try:
-            old_image_id = container_image_id(old.get("full_id") or old.get("id") or name)
-        except Exception:
-            old_image_id = None
-    except Exception:
-        # try by id from list
-        for c in list_containers(all_containers=True):
-            if (c.get("name") or "").lstrip("/") == name:
-                old = c
-                was_running = (c.get("status") or "").lower() == "running"
-                try:
-                    old_image_id = container_image_id(c.get("id") or name)
-                except Exception:
-                    old_image_id = None
-                break
-
-    try:
-        if old:
-            try:
-                stop_container(old.get("id") or name)
-            except Exception:
-                pass
-            remove_container(old.get("id") or name, force=True)
-
-        run_kwargs = template_to_run_kwargs(tpl, start=was_running)
-        created = create_and_start(run_kwargs, start=was_running)
-
-        # Extra networks
-        extra = (tpl.get("extra_networks") or "").strip()
-        if extra:
-            for net in [x.strip() for x in extra.split(",") if x.strip()]:
-                try:
-                    connect_network(created.get("full_id") or created.get("id") or name, net)
-                except Exception:
-                    pass
-
-        refresh_template_name_cache()
-
-        image_cleanup: dict[str, Any] | None = None
-        if old_image_id:
-            _emit_progress(
-                on_progress,
-                {
-                    "event": "stage",
-                    "stage": "cleanup_images",
-                    "message": "清理被替换的旧镜像 / dangling 层",
-                    "container": name,
-                },
-            )
-            try:
-                keep_ids: list[str] = []
-                try:
-                    new_iid = container_image_id(
-                        created.get("full_id") or created.get("id") or name
-                    )
-                    if new_iid:
-                        keep_ids.append(new_iid)
-                except Exception:
-                    pass
-                image_cleanup = cleanup_superseded_images(
-                    [old_image_id], dangling_prune=True, keep_image_ids=keep_ids
-                )
-            except Exception as e:
-                image_cleanup = {"ok": False, "error": str(e)}
-
-        rec = add_ops_record(
-            action="unraid_update",
-            target=name,
-            status="ok",
-            detail={
-                "backup": backup.get("backup_path"),
-                "pull": pull,
-                "repository": target_image,
-                "recreated": True,
-                "managed_label": "dockerman",
-                "old_image_id": old_image_id,
-                "image_cleanup": image_cleanup,
-            },
-            actor=actor,
-        )
-        msg = f"已按 Unraid 模板安全更新并重建 {name}（dockerman，非三方）"
-        if image_cleanup and image_cleanup.get("removed_count"):
-            msg += f"；已清理旧镜像 {image_cleanup.get('removed_count')} 个"
-        _emit_progress(on_progress, {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True})
-        return {
-            "ok": True,
-            "record": rec,
-            "backup": backup,
-            "pull": pull,
-            "container": created,
-            "old_image_id": old_image_id,
-            "image_cleanup": image_cleanup,
-            "message": msg,
+            "message": f"已备份并拉取镜像；未重建容器（{reason}）",
         }
     except Exception as e:
         rec = add_ops_record(
             action="unraid_update",
             target=name,
             status="failed",
-            detail={"step": "recreate", "error": str(e), "backup": backup.get("backup_path"), "pull": pull},
+            detail={"step": "pull", "error": str(e), "backup": backup.get("backup_path")},
             actor=actor,
         )
-        msg = f"模板重建失败：{e}。请用备份 XML 在 Unraid 中恢复。"
+        return {"ok": False, "record": rec, "backup": backup, "message": f"拉镜像失败：{e}"}
+
+
+def _unraid_host_update(
+    name: str,
+    tpl: dict[str, Any],
+    target_image: str,
+    backup: dict[str, Any],
+    actor: str | None,
+    on_progress,
+    executor,
+) -> dict[str, Any]:
+    """Rebuild through ``update_container`` / ``rebuild_container``."""
+    _emit_progress(
+        on_progress,
+        {
+            "event": "stage",
+            "stage": "host_update",
+            "message": f"调用宿主机模板脚本重建 {name}",
+            "container": name,
+        },
+    )
+
+    old_image_id = None
+    try:
+        old = get_container(name)
+        old_image_id = container_image_id(old.get("full_id") or old.get("id") or name)
+    except Exception:
+        pass
+
+    try:
+        result = unraid_host.host_update_container(name, executor=executor, pull=True)
+    except unraid_host.HostScriptUnavailable as e:
+        rec = add_ops_record(
+            action="unraid_update",
+            target=name,
+            status="failed",
+            detail={"step": "host_update", "reason": str(e)},
+            actor=actor,
+        )
+        return {"ok": False, "record": rec, "backup": backup, "message": str(e)}
+    except Exception as e:
+        rec = add_ops_record(
+            action="unraid_update",
+            target=name,
+            status="failed",
+            detail={"step": "host_update", "error": str(e), "backup": backup.get("backup_path")},
+            actor=actor,
+        )
+        return {
+            "ok": False,
+            "record": rec,
+            "backup": backup,
+            "message": f"模板脚本重建失败：{e}。请用备份 XML 恢复。",
+        }
+
+    label = result.get("managed_label") or {}
+    if not label.get("ok"):
+        rec = add_ops_record(
+            action="unraid_update",
+            target=name,
+            status="failed",
+            detail={
+                "step": "verify_label",
+                "label": label,
+                "backup": backup.get("backup_path"),
+            },
+            actor=actor,
+        )
+        msg = label.get("message") or "容器模板归属校验失败"
         _emit_progress(on_progress, {"event": "error", "message": msg, "container": name})
         return {
             "ok": False,
             "record": rec,
             "backup": backup,
-            "pull": pull,
-            "message": msg,
+            "managed_label": label,
+            "message": f"{msg}。容器可能已脱离模板管理，请检查模板或手动重建。",
         }
+
+    # Unraid's script drops the image it saw before the pull; ids still in use
+    # by the new container are protected.
+    image_cleanup = None
+    if old_image_id:
+        _emit_progress(
+            on_progress,
+            {
+                "event": "stage",
+                "stage": "cleanup_images",
+                "message": "清理被替换的旧镜像 / dangling 层",
+                "container": name,
+            },
+        )
+        keep_ids: list[str] = []
+        try:
+            new_iid = container_image_id(name)
+            if new_iid:
+                keep_ids.append(new_iid)
+        except Exception:
+            pass
+        try:
+            image_cleanup = cleanup_superseded_images(
+                [old_image_id], dangling_prune=True, keep_image_ids=keep_ids
+            )
+        except Exception as e:
+            image_cleanup = {"ok": False, "error": str(e)}
+
+    try:
+        refresh_template_name_cache()
+    except Exception:
+        pass
+
+    rec = add_ops_record(
+        action="unraid_update",
+        target=name,
+        status="ok",
+        detail={
+            "backup": backup.get("backup_path"),
+            "repository": target_image,
+            "recreated": True,
+            "via": result.get("script"),
+            "managed_label": label,
+            "restarted": result.get("restarted"),
+            "old_image_id": old_image_id,
+            "image_cleanup": image_cleanup,
+        },
+        actor=actor,
+    )
+
+    msg = f"已按 Unraid 模板更新并重建 {name}（{result.get('script')}）"
+    if result.get("restarted"):
+        msg += "；已重新启动容器"
+    if image_cleanup and image_cleanup.get("removed_count"):
+        msg += f"；已清理旧镜像 {image_cleanup.get('removed_count')} 个"
+
+    _emit_progress(
+        on_progress,
+        {"event": "stage", "stage": "done", "message": msg, "container": name, "ok": True},
+    )
+    return {
+        "ok": True,
+        "record": rec,
+        "backup": backup,
+        "container": get_container(name) if _exists(name) else None,
+        "managed_label": label,
+        "old_image_id": old_image_id,
+        "image_cleanup": image_cleanup,
+        "message": msg,
+    }
+
+
+def _exists(name: str) -> bool:
+    try:
+        get_container(name)
+        return True
+    except Exception:
+        return False
 
 
 def adopt_to_unraid(container_id: str, actor: str | None = None) -> dict[str, Any]:
