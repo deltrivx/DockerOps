@@ -7,6 +7,8 @@ const state = {
   version: "0.7.1",
   tab: "overview",
   endpoints: [],
+  devices: [],
+  deviceConnection: "local",
   endpointId: localStorage.getItem("dockerops_endpoint") || "",
   endpoint: null,
   remote: null,
@@ -261,8 +263,64 @@ function setAuthUI() {
   }
 }
 
-function applyEndpoints(data) {
+function renderEndpointSelect() {
+  const sel = $("#endpoint-select");
+  if (!sel) return;
+  // Show devices when we have them, so the header agrees with the device screen.
+  const list = (state.devices && state.devices.length ? state.devices : state.endpoints) || [];
+  const cur = state.endpointId || "";
+  const opts = list.length
+    ? list
+        .map((e) => {
+          const conn = e.connection || (e.kind === "remote_agent" ? "agent" : "docker");
+          const tag = conn === "local" ? "" : ` · ${CONNECTION_LABELS[conn] || conn}`;
+          return `<option value="${escapeHtml(e.id)}" ${e.id === cur ? "selected" : ""}>${escapeHtml(
+            e.name || e.docker_host || e.id
+          )}${tag}</option>`;
+        })
+        .join("")
+    : `<option value="">本机</option>`;
+  sel.innerHTML = opts;
+  sel.disabled = !list.length;
+  sel.title = state.endpoint
+    ? `${state.endpoint.name} · ${state.endpoint.docker_host || state.endpoint.kind || ""}`
+    : "Docker 端点";
+}
+
+const CONNECTION_LABELS = {
+  local: "本机",
+  ssh: "SSH",
+  docker: "Docker API",
+  agent: "远程节点",
+};
+
+const PLATFORM_LABELS = {
+  unraid: "Unraid",
+  fnos: "飞牛",
+  generic: "通用",
+};
+
+const CAPABILITY_LABELS = {
+  template_rebuild: "模板重建",
+  unraid_templates: "Unraid 模板",
+  compose: "Compose",
+  compose_manage: "Compose 操作",
+  console: "终端",
+  host_scripts: "宿主机脚本",
+};
+
+function capabilitySummary(caps) {
+  const c = caps || {};
+  const parts = Object.keys(CAPABILITY_LABELS)
+    .filter((k) => c[k])
+    .map((k) => CAPABILITY_LABELS[k]);
+  return parts.length ? parts.join(" · ") : "基础只读";
+}
+
+function applyDevices(data) {
   const items = data?.items || [];
+  state.devices = items;
+  // Feed the existing endpoint machinery so endpoint-dependent code keeps working.
   state.endpoints = items;
   const activeId = data?.active_id || state.endpointId || "";
   if (activeId) {
@@ -278,119 +336,267 @@ function applyEndpoints(data) {
     state.endpointId = state.endpoint.id;
   }
   renderEndpointSelect();
-  renderEndpointsTable();
+  renderDevices();
 }
 
-function renderEndpointSelect() {
-  const sel = $("#endpoint-select");
-  if (!sel) return;
-  const items = state.endpoints || [];
-  const cur = state.endpointId || "";
-  const opts = items.length
-    ? items
-        .map((e) => {
-          const remoteKind = e.kind === "remote_agent";
-          const tag = e.is_local
-            ? ""
-            : remoteKind
-              ? e.online
-                ? " · 远程节点·在线"
-                : " · 远程节点·离线"
-              : " · 远程";
-          return `<option value="${escapeHtml(e.id)}" ${e.id === cur ? "selected" : ""}>${escapeHtml(
-            e.name || e.docker_host || e.id
-          )}${tag}</option>`;
-        })
-        .join("")
-    : `<option value="">本机</option>`;
-  sel.innerHTML = opts;
-  sel.disabled = !items.length;
-  sel.title = state.endpoint
-    ? `${state.endpoint.name} · ${state.endpoint.docker_host || state.endpoint.kind || ""}`
-    : "Docker 端点";
-}
+function renderDevices() {
+  const items = state.devices || [];
+  const active = items.find((d) => d.is_active) || null;
 
-function renderEndpointsTable() {
-  const tbody = $("#endpoint-rows");
+  // Current-device strip
+  const strip = $("#device-current");
+  if (strip) {
+    if (active) {
+      strip.hidden = false;
+      const dot = $("#device-current-dot");
+      if (dot) dot.dataset.conn = active.connection || "docker";
+      const nm = $("#device-current-name");
+      if (nm) nm.textContent = active.name || active.id;
+      const plat = $("#device-current-platform");
+      if (plat) plat.textContent = PLATFORM_LABELS[active.platform] || active.platform || "通用";
+      const conn = $("#device-current-connection");
+      if (conn) conn.textContent = CONNECTION_LABELS[active.connection] || active.connection;
+      const meta = $("#device-current-meta");
+      if (meta) {
+        const bits = [];
+        if (active.docker_host) bits.push(active.docker_host);
+        const lp = active.last_probe;
+        if (lp && lp.hostname) bits.push(`主机 ${lp.hostname}`);
+        if (lp && lp.os) bits.push(lp.os);
+        if (lp && lp.docker) bits.push(lp.docker);
+        meta.textContent = bits.join(" · ") || "—";
+      }
+      // Once something is connected, collapse the connect panel: the other
+      // connection types are not relevant until the user asks for a new device.
+      const panel = $("#device-connect-panel");
+      if (panel) panel.hidden = true;
+    } else {
+      strip.hidden = true;
+      const panel = $("#device-connect-panel");
+      if (panel) panel.hidden = false;
+    }
+  }
+
+  const tbody = $("#device-rows");
   if (!tbody) return;
-  const items = state.endpoints || [];
-  const active = state.endpointId || "";
   if (!items.length) {
-    tbody.innerHTML = `<tr><td colspan="5" class="muted">暂无端点（启动后会自动创建「本机」）</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="5" class="muted">暂无设备</td></tr>`;
     return;
   }
   tbody.innerHTML = "";
-  items.forEach((e) => {
+  items.forEach((d) => {
     const tr = document.createElement("tr");
-    const caps = e.capabilities || {};
-    const badge = e.is_active || e.id === active
-      ? `<span class="pill running">活动</span>`
-      : e.is_default
-        ? `<span class="pill">默认</span>`
-        : "";
-    const isRemoteAgent = e.kind === "remote_agent";
-    const kind = e.is_local ? "本地" : isRemoteAgent ? "远程节点" : "远程";
-    const onlineBadge = isRemoteAgent
-      ? e.online
-        ? `<span class="pill running">在线</span>`
-        : `<span class="pill">离线</span>`
-      : badge;
+    const conn = d.connection || "docker";
+    const plat = d.platform || "generic";
+    const detectedNote = d.platform_detected ? "" : `<span class="muted small"> · 未识别</span>`;
+    const activeBadge = d.is_active ? `<span class="pill running">活动</span>` : "";
+
     tr.innerHTML = `
-      <td class="cell-text"><strong class="cell-clip">${escapeHtml(e.name || "")}</strong>
-        <div class="muted small cell-clip">${escapeHtml(e.docker_host || "")}</div></td>
-      <td class="col-status">${escapeHtml(kind)} ${e.tls_enabled ? "· TLS" : ""}</td>
-      <td class="col-status">${onlineBadge} ${badge}</td>
-      <td class="cell-text muted small">${
-        isRemoteAgent
-          ? "拨出 RPC · 容器/镜像/更新"
-          : `${caps.compose ? "Compose " : ""}${caps.unraid ? "Unraid " : ""}${caps.console ? "终端" : ""}`
-      }</td>
+      <td class="cell-text"><strong class="cell-clip">${escapeHtml(d.name || "")}</strong>
+        <div class="muted small cell-clip">${escapeHtml(
+          d.docker_host || d.address || d.id
+        )}</div></td>
+      <td class="col-status">${escapeHtml(CONNECTION_LABELS[conn] || conn)}</td>
+      <td class="col-status">${escapeHtml(PLATFORM_LABELS[plat] || plat)}${detectedNote}</td>
+      <td class="cell-text muted small">${escapeHtml(capabilitySummary(d.capabilities))}</td>
       <td class="col-actions actions"></td>
     `;
     const actions = tr.querySelector(".actions");
     const primary = [];
-    if (!(e.is_active || e.id === active)) {
-      primary.push({
-        label: "切换",
-        primary: true,
-        fn: () => activateEndpoint(e.id),
-      });
+    if (!d.is_active) {
+      primary.push({ label: "连接", primary: true, fn: () => connectDevice(d.id) });
+    } else {
+      primary.push({ label: "已连接", disabled: true, fn: () => {} });
     }
-    primary.push({ label: "测试", fn: () => testEndpoint(e.id) });
-    const more = isRemoteAgent
-      ? [
-          {
-            label: "断开节点",
-            danger: true,
-            fn: () => disconnectRemoteSession(String(e.id).replace(/^remote:/, "")),
-          },
-        ]
-      : [
-          {
-            label: "设为默认",
-            fn: () => updateEndpoint(e.id, { is_default: true }),
-            disabled: !!e.is_default,
-          },
-          {
-            label: "删除",
-            danger: true,
-            fn: () => deleteEndpoint(e.id),
-            disabled: items.length <= 1,
-          },
-        ];
+    const more = [
+      { label: "重新识别", fn: () => probeDevice(d.id) },
+      {
+        label: "查看公钥",
+        fn: () => showKeypair(),
+        disabled: conn !== "ssh",
+      },
+      {
+        label: "删除",
+        danger: true,
+        fn: () => deleteDevice(d.id),
+        disabled: items.length <= 1,
+      },
+    ];
     fillActionGroup(actions, primary, more);
     tbody.appendChild(tr);
   });
 }
 
-async function loadEndpoints() {
+function selectConnection(kind) {
+  state.deviceConnection = kind;
+  document.querySelectorAll("#device-connection-choices .choice").forEach((b) => {
+    const on = b.dataset.conn === kind;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-checked", on ? "true" : "false");
+  });
+  // Hide every field group that is not the chosen one.
+  const ssh = $("#device-fields-ssh");
+  const docker = $("#device-fields-docker");
+  const localHint = $("#device-hint-local");
+  if (ssh) ssh.hidden = kind !== "ssh";
+  if (docker) docker.hidden = kind !== "docker";
+  if (localHint) localHint.hidden = kind !== "local";
+}
+
+async function loadDevices() {
   try {
-    const data = await api("/api/endpoints");
-    applyEndpoints(data);
+    const data = await api("/api/devices");
+    applyDevices(data);
     return data;
   } catch (e) {
     return null;
   }
+}
+
+async function connectDevice(id) {
+  if (!requireLogin()) return;
+  const status = $("#device-form-status");
+  if (status) status.textContent = "连接中…";
+  try {
+    const r = await api(`/api/devices/${encodeURIComponent(id)}/connect`, {
+      method: "POST",
+      body: JSON.stringify({ autodetect: true }),
+    });
+    if (status) status.textContent = r.message || "";
+    if (!r.ok) {
+      alert(r.message || "连接失败");
+      return;
+    }
+    await loadDevices();
+    await loadAll({ banner: true });
+  } catch (e) {
+    if (status) status.textContent = "";
+    alert(e.message || String(e));
+  }
+}
+
+async function probeDevice(id) {
+  if (!requireLogin()) return;
+  try {
+    const r = await api(`/api/devices/${encodeURIComponent(id)}/probe`, { method: "POST" });
+    alert(r.message || (r.ok ? "识别完成" : "识别失败"));
+    await loadDevices();
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function deleteDevice(id) {
+  if (!requireLogin()) return;
+  const d = (state.devices || []).find((x) => x.id === id);
+  if (!confirm(`确定删除设备「${d?.name || id}」？`)) return;
+  try {
+    const r = await api(`/api/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (r.active_id) {
+      state.endpointId = r.active_id;
+      try {
+        localStorage.setItem(ENDPOINT_STORAGE_KEY, state.endpointId);
+      } catch (_) {
+        /* ignore */
+      }
+    }
+    await loadDevices();
+    await loadAll({ banner: true });
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function showKeypair() {
+  if (!requireLogin()) return;
+  try {
+    const r = await api("/api/devices/keypair");
+    if (!r.ok) {
+      alert(r.message || "无法生成公钥");
+      return;
+    }
+    const hint =
+      "把下面这行公钥追加到目标主机的 /root/.ssh/authorized_keys：\n\n" + r.public_key;
+    // Copy first so the user does not have to select text out of an alert.
+    try {
+      await navigator.clipboard.writeText(r.public_key);
+      alert(hint + "\n\n（已复制到剪贴板）");
+    } catch (_) {
+      alert(hint);
+    }
+  } catch (e) {
+    alert(e.message || String(e));
+  }
+}
+
+async function connectDeviceFromForm() {
+  if (!requireLogin()) return;
+  const kind = state.deviceConnection || "local";
+  const status = $("#device-form-status");
+  const payload = { connection: kind, autodetect: true };
+
+  if (kind === "ssh") {
+    payload.name = ($("#dev-ssh-name")?.value || "").trim();
+    payload.address = ($("#dev-ssh-address")?.value || "").trim();
+    payload.ssh_port = parseInt($("#dev-ssh-port")?.value || "22", 10) || 22;
+    payload.ssh_user = ($("#dev-ssh-user")?.value || "root").trim();
+    payload.ssh_password = $("#dev-ssh-password")?.value || "";
+    payload.ssh_key = ($("#dev-ssh-key")?.value || "").trim();
+    if (!payload.name || !payload.address) {
+      if (status) status.textContent = "请填写名称与主机地址";
+      return;
+    }
+  } else if (kind === "docker") {
+    payload.name = ($("#dev-docker-name")?.value || "").trim();
+    payload.docker_host = ($("#dev-docker-host")?.value || "").trim();
+    payload.tls_enabled = !!$("#dev-docker-tls")?.checked;
+    payload.verify_tls = !!$("#dev-docker-verify-tls")?.checked;
+    payload.tls_ca = ($("#dev-docker-ca")?.value || "").trim();
+    payload.tls_cert = ($("#dev-docker-cert")?.value || "").trim();
+    payload.tls_key = ($("#dev-docker-key")?.value || "").trim();
+    if (!payload.name || !payload.docker_host) {
+      if (status) status.textContent = "请填写名称与 Docker Host";
+      return;
+    }
+  } else {
+    payload.name = `本机`;
+  }
+
+  try {
+    if (status) status.textContent = "连接中…";
+    const created = await api("/api/devices", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    if (!created.ok) {
+      if (status) status.textContent = created.message || "创建失败";
+      return;
+    }
+    // Then activate it, so the user gets one action instead of two.
+    const r = await api(
+      `/api/devices/${encodeURIComponent(created.item.id)}/connect`,
+      { method: "POST", body: JSON.stringify({ autodetect: true }) }
+    );
+    if (status) status.textContent = r.message || created.message || "";
+    if (!r.ok) alert(r.message || "设备已添加，但连接失败");
+    ["#dev-ssh-name", "#dev-ssh-address", "#dev-ssh-password", "#dev-ssh-key",
+     "#dev-docker-name", "#dev-docker-host", "#dev-docker-ca", "#dev-docker-cert",
+     "#dev-docker-key"].forEach((s) => {
+      const el = $(s);
+      if (el) el.value = "";
+    });
+    await loadDevices();
+    if (r.ok) await loadAll({ banner: true });
+  } catch (e) {
+    if (status) status.textContent = "";
+    alert(e.message || String(e));
+  }
+}
+
+async function loadEndpoints() {
+  // Delegates to the device endpoint: it returns the same list plus connection
+  // type and detected platform, which the header selector now shows.
+  return loadDevices();
 }
 
 async function activateEndpoint(id) {
@@ -414,7 +620,7 @@ async function activateEndpoint(id) {
     } catch (_) {
       /* ignore */
     }
-    applyEndpoints({
+    applyDevices({
       items: state.endpoints.map((x) => ({ ...x, is_active: x.id === state.endpointId })),
       active_id: state.endpointId,
     });
@@ -958,6 +1164,125 @@ function applyUpdateStatus(data) {
   if (state.tab === "containers" || state.tab === "overview") renderContainers();
 }
 
+// ── Auto-update policy (per container) ──────────────────────────────────────
+
+const POLICY_LABELS = {
+  auto: "自动更新",
+  notify: "仅提示",
+  ignore: "忽略",
+};
+
+function policyReason(item) {
+  const d = item.decision || {};
+  if (d.allowed) return d.manager ? `由 ${d.manager} 重建` : "可自动更新";
+  return d.reason || item.blocked_reason || "不可自动更新";
+}
+
+async function loadUpdatePolicy() {
+  const tbody = $("#update-policy-rows");
+  try {
+    const data = await api("/api/ops/update-policy");
+    const items = data.containers || [];
+    if (!tbody) return data;
+    if (!items.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="muted">还没有任何容器被单独设置；在下方容器列表中逐个开启。</td></tr>`;
+      return data;
+    }
+    tbody.innerHTML = "";
+    items.forEach((it) => {
+      const tr = document.createElement("tr");
+      const blocked = !(it.decision || {}).allowed;
+      tr.innerHTML = `
+        <td class="cell-text"><strong class="cell-clip">${escapeHtml(it.name)}</strong></td>
+        <td class="col-status">${escapeHtml(it.manager || "—")}</td>
+        <td class="col-status">${
+          it.update_available ? `<span class="pill running">有更新</span>` : `<span class="muted">—</span>`
+        }</td>
+        <td class="col-status"></td>
+        <td class="cell-text muted small">${escapeHtml(policyReason(it))}</td>
+      `;
+      const cell = tr.querySelectorAll("td")[3];
+      const sel = document.createElement("select");
+      sel.className = "input select";
+      ["auto", "notify", "ignore"].forEach((v) => {
+        const o = document.createElement("option");
+        o.value = v;
+        o.textContent = POLICY_LABELS[v];
+        if (it.action === v) o.selected = true;
+        sel.appendChild(o);
+      });
+      // A blocked container still shows the choice, so the user can see what
+      // they picked and why it is not being applied.
+      if (blocked && it.action === "auto") sel.classList.add("is-blocked");
+      sel.addEventListener("change", () => setUpdatePolicy(it.name, sel.value, it));
+      cell.appendChild(sel);
+      tbody.appendChild(tr);
+    });
+    return data;
+  } catch (e) {
+    if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="muted">加载失败：${escapeHtml(e.message || String(e))}</td></tr>`;
+    return null;
+  }
+}
+
+async function setUpdatePolicy(name, action, ctx) {
+  if (!requireLogin()) return;
+  const status = $("#update-policy-status");
+  try {
+    const r = await api("/api/ops/update-policy", {
+      method: "PUT",
+      body: JSON.stringify({
+        name,
+        action,
+        manager: ctx?.manager || "",
+        image: ctx?.image || "",
+      }),
+    });
+    if (status) status.textContent = r.message || "已保存";
+    // Report a blocked choice immediately rather than letting the select look
+    // like it took effect.
+    if (r.blocked) alert(r.message);
+    await loadUpdatePolicy();
+  } catch (e) {
+    if (status) status.textContent = e.message || "保存失败";
+    await loadUpdatePolicy();
+  }
+}
+
+async function applyAutoUpdatesNow() {
+  if (!requireLogin()) return;
+  const status = $("#update-policy-status");
+  if (status) status.textContent = "执行中…";
+  try {
+    const r = await api("/api/ops/update-policy/apply", { method: "POST" });
+    const msg = r.message || (r.ok ? "已执行" : "执行失败");
+    if (status) status.textContent = msg;
+    if (r.noop && r.reasons && r.reasons.length) {
+      const lines = r.reasons
+        .slice(0, 8)
+        .map((x) => `· ${x.name}：${x.reason}`)
+        .join("\n");
+      alert(`${msg}\n\n${lines}`);
+    }
+    await loadUpdatePolicy();
+    await loadAll({ banner: true });
+  } catch (e) {
+    if (status) status.textContent = e.message || "执行失败";
+  }
+}
+
+async function pruneUpdatePolicy() {
+  if (!requireLogin()) return;
+  const status = $("#update-policy-status");
+  try {
+    const r = await api("/api/ops/update-policy/prune", { method: "POST" });
+    if (status) status.textContent = r.message || "已清理";
+    await loadUpdatePolicy();
+  } catch (e) {
+    if (status) status.textContent = e.message || "清理失败";
+  }
+}
+
 async function checkSetup() {
   try {
     const st = await api("/api/auth/status");
@@ -1392,7 +1717,7 @@ async function loadAll(opts = {}) {
 
     if (seq !== state.loadSeq) return;
 
-    if (endpoints) applyEndpoints(endpoints);
+    if (endpoints) applyDevices(endpoints);
     else if (health.endpoint?.id) {
       state.endpointId = health.endpoint.id;
       state.endpoint = health.endpoint;
@@ -2868,9 +3193,11 @@ async function loadSystemSettings() {
     }
     const ac = $("#sys-auto-check");
     if (ac) ac.checked = auto.auto_check_enabled !== false;
+    const ap = $("#sys-auto-apply");
+    if (ap) ap.checked = !!auto.auto_apply_enabled;
     const iv = $("#sys-auto-interval");
     if (iv) iv.value = String(auto.auto_check_interval_hours || 6);
-    await loadRemoteSettings();
+    await Promise.all([loadRemoteSettings(), loadUpdatePolicy(), loadDevices()]);
   } catch (e) {
     const st = $("#sys-settings-status");
     if (st) st.textContent = e.message || "加载系统设置失败";
@@ -3852,19 +4179,40 @@ $("#endpoint-select")?.addEventListener("change", (e) => {
   const id = e.target.value;
   if (id) activateEndpoint(id);
 });
-$("#btn-ep-create")?.addEventListener("click", () => createEndpointFromForm());
-$("#ep-tls")?.addEventListener("change", (e) => {
+// ── Device connection UI ────────────────────────────────────────────────────
+document.querySelectorAll("#device-connection-choices .choice").forEach((btn) => {
+  btn.addEventListener("click", () => selectConnection(btn.dataset.conn));
+});
+$("#btn-device-connect")?.addEventListener("click", () => connectDeviceFromForm());
+$("#btn-device-keypair")?.addEventListener("click", () => showKeypair());
+$("#btn-device-reprobe")?.addEventListener("click", () => {
+  const active = (state.devices || []).find((d) => d.is_active);
+  if (active) probeDevice(active.id);
+});
+$("#btn-device-new")?.addEventListener("click", () => {
+  // Re-open the connect panel for adding another device.
+  const panel = $("#device-connect-panel");
+  if (panel) {
+    panel.hidden = false;
+    panel.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+});
+$("#dev-docker-tls")?.addEventListener("change", (e) => {
   const on = !!e.target.checked;
-  ["#ep-tls-ca", "#ep-tls-cert", "#ep-tls-key"].forEach((s) => {
-    const el = $(s);
+  ["#dev-docker-ca", "#dev-docker-cert", "#dev-docker-key"].forEach((sel) => {
+    const el = $(sel);
     if (el) el.disabled = !on;
   });
 });
+selectConnection("local");
 
+$("#btn-update-policy-apply")?.addEventListener("click", () => applyAutoUpdatesNow());
+$("#btn-update-policy-prune")?.addEventListener("click", () => pruneUpdatePolicy());
 $("#btn-save-sys-settings")?.addEventListener("click", async () => {
   if (!requireLogin()) return;
   const body = {
     auto_check_enabled: !!$("#sys-auto-check")?.checked,
+    auto_apply_enabled: !!$("#sys-auto-apply")?.checked,
     auto_check_interval_hours: Number($("#sys-auto-interval")?.value || 6),
   };
   const locked = !!state.systemSettings?.proxy?.env_locked;

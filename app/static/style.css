@@ -2050,3 +2050,117 @@ body.remote-managed-lock .tab-panel[data-panel="images"] .toolbar .btn.primary {
   .meter-fill { transition: none; }
   /* particles still allowed unless user opts out in 个性化 */
 }
+
+/* ── Device connection UI ──────────────────────────────────────────────────
+   The connect screen leads with *how* the device is reached rather than with
+   a free-text Docker Host, because the connection type decides which other
+   fields matter and which features exist at all. */
+
+.device-current {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.8rem 0.95rem;
+  margin-bottom: 0.9rem;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--ok);
+  border-radius: var(--radius);
+  background: var(--panel-2);
+}
+
+.device-current-main {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex-wrap: wrap;
+}
+
+.device-current-name {
+  font-size: 1.02rem;
+  letter-spacing: 0.01em;
+}
+
+.device-current-meta {
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.device-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--muted);
+  flex: 0 0 auto;
+}
+
+.device-dot[data-conn="local"],
+.device-dot[data-conn="ssh"] { background: var(--ok); }
+.device-dot[data-conn="docker"] { background: var(--warn); }
+.device-dot[data-conn="agent"] { background: var(--purple-2); }
+
+.device-connect-panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.9rem 0.95rem;
+  background: var(--panel);
+}
+
+.field-block { margin-bottom: 0.75rem; }
+
+.field-label {
+  display: block;
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+  letter-spacing: 0.02em;
+}
+
+.choice-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.55rem;
+}
+
+.choice {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  text-align: left;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel-solid);
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.choice:hover { border-color: var(--border-strong); }
+
+.choice.active {
+  border-color: var(--purple-2);
+  background: rgba(108, 92, 231, 0.14);
+}
+
+.choice-title {
+  font-weight: 600;
+  /* Titles and descriptions are deliberately the same two sizes everywhere in
+     this block; the old screen mixed five sizes for the same information. */
+  font-size: 0.95rem;
+}
+
+.choice-desc {
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.device-fields { margin-top: 0.35rem; }
+
+select.input.is-blocked,
+.input.is-blocked {
+  border-color: var(--warn);
+}
+
+.pill { white-space: nowrap; }
