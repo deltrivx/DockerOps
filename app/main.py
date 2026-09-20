@@ -96,6 +96,24 @@ from docker_resources import (
 from db import get_meta, set_meta  # noqa: E402 — re-export style keep near meta helpers
 from doctor import diagnose_all, diagnose_one
 from events_stream import recent_events, sse_docker_events
+from devices import (
+    CONNECTION_TYPES,
+    device_connection_summary,
+    normalize_connection,
+    normalize_platform,
+    platform_capabilities,
+    public_device,
+    upsert_probe_result,
+)
+from host_exec import (
+    SshTarget,
+    ensure_keypair,
+    get_host_executor,
+    install_public_key,
+    probe_host,
+    reset_host_executor_cache,
+    ssh_executor,
+)
 from host_platform import platform_info
 from logs_stream import get_logs, sse_log_events
 from manager import managers_summary
@@ -531,6 +549,64 @@ class EndpointBody(BaseModel):
     is_default: bool = False
     notes: str = ""
     enabled: bool | None = None
+
+
+class DeviceBody(BaseModel):
+    """Create/connect a device.
+
+    ``connection`` decides which fields matter; the rest are ignored rather than
+    rejected, so a client can send one payload shape for every connection type.
+    """
+
+    name: str = Field(..., min_length=1, max_length=64)
+    connection: str = Field("local", description="local | docker | ssh | agent")
+    docker_host: str = Field("", max_length=512)
+    address: str = Field("", max_length=255, description="SSH 主机或 IP")
+    ssh_port: int = Field(22, ge=1, le=65535)
+    ssh_user: str = Field("root", max_length=64)
+    ssh_password: str = Field("", max_length=512)
+    ssh_key: str = Field("", description="私钥内容；留空则自动生成本机密钥对")
+    # docker connection
+    tls_enabled: bool = False
+    tls_ca: str = ""
+    tls_cert: str = ""
+    tls_key: str = ""
+    verify_tls: bool = True
+    # agent connection
+    session_id: str = Field("", max_length=128)
+    notes: str = ""
+    is_default: bool = False
+    # Probe the target on connect and record what it actually is.
+    autodetect: bool = True
+
+
+class DevicePatchBody(BaseModel):
+    name: str | None = Field(default=None, min_length=1, max_length=64)
+    connection: str | None = None
+    platform: str | None = None
+    docker_host: str | None = Field(default=None, max_length=512)
+    address: str | None = Field(default=None, max_length=255)
+    ssh_port: int | None = Field(default=None, ge=1, le=65535)
+    ssh_user: str | None = Field(default=None, max_length=64)
+    ssh_password: str | None = None
+    ssh_key: str | None = None
+    tls_enabled: bool | None = None
+    tls_ca: str | None = None
+    tls_cert: str | None = None
+    tls_key: str | None = None
+    verify_tls: bool | None = None
+    notes: str | None = None
+    is_default: bool | None = None
+    enabled: bool | None = None
+
+
+class DeviceConnectBody(BaseModel):
+    """Options for a connect attempt, so a failed probe is not a failed save."""
+
+    autodetect: bool = True
+    install_key: bool = False
+    password: str = ""
+    ssh_key: str = ""
 
 
 class EndpointPatchBody(BaseModel):
@@ -1985,6 +2061,12 @@ def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[s
 
 @app.get("/api/endpoints")
 def api_endpoints_list(actor: OptionalUser = None) -> dict[str, Any]:
+    """Legacy endpoint listing.
+
+    Superseded by ``/api/devices``, which carries connection type and detected
+    platform. Kept so an older client keeps working; new client code should call
+    ``/api/devices``.
+    """
     active_id = get_active_endpoint_id()
     # client may keep remote:* in localStorage; surface it if still valid
     stored_remote = get_meta(META_ACTIVE_REMOTE) or ""
@@ -2187,6 +2269,376 @@ async def api_endpoints_test(endpoint_id: str, actor: AuthUser) -> dict[str, Any
         "docker": result,
         "item": public_endpoint(ep, active_id=get_active_endpoint_id()),
         "message": "连通正常" if result.get("ok") else f"连通失败：{result.get('error') or 'unknown'}",
+    }
+
+
+# ── Devices (connection type + detected platform) ────────
+#
+# The endpoint routes above describe a Docker API URL. A device additionally
+# records how the host is reached and what it turned out to be, because several
+# features (Unraid template rebuilds, compose project management) need a shell on
+# the host and are simply not available over a bare Docker URL.
+
+
+def _device_ssh_target(body: "DeviceBody | DeviceConnectBody", *, address: str, user: str,
+                       port: int, password: str, key: str) -> SshTarget:
+    """Build an SSH target, reusing a stored password/private key when omitted.
+
+    Users should not have to re-enter credentials to re-probe a device they
+    already connected, so an empty field means "use what is stored".
+    """
+    return SshTarget(
+        address,
+        port=int(port or 22),
+        user=(user or "root").strip() or "root",
+        password=password or "",
+        key_body=key or "",
+    )
+
+
+def _stored_ssh_fields(ep: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "address": (ep.get("address") or "").strip(),
+        "ssh_user": (ep.get("ssh_user") or "root").strip() or "root",
+        "ssh_password": (ep.get("ssh_password") or "").strip(),
+        "ssh_key": (ep.get("ssh_key") or "").strip(),
+    }
+
+
+@app.get("/api/devices")
+def api_devices_list(actor: OptionalUser = None) -> dict[str, Any]:
+    active_id = get_active_endpoint_id()
+    stored_remote = get_meta(META_ACTIVE_REMOTE) or ""
+    items = [public_device(ep, active_id=active_id) for ep in list_endpoints()]
+    # Remote-agent peers are devices too; fold them in rather than making the
+    # client merge two lists with different shapes.
+    try:
+        st = get_remote_settings()
+        if st.get("enabled") and st.get("role") == "controller":
+            for s in list_controller_outbound_sessions():
+                rid = remote_endpoint_id(s["session_id"])
+                items.append(
+                    {
+                        "id": rid,
+                        "name": f"远程 · {s.get('peer_name') or '节点'}",
+                        "connection": "agent",
+                        "platform": normalize_platform(s.get("platform") or "generic"),
+                        "docker_host": s.get("docker_host") or f"remote://{s['session_id'][:8]}",
+                        "address": "",
+                        "is_local": False,
+                        "is_active": stored_remote == rid,
+                        "enabled": True,
+                        "online": bool(s.get("online")),
+                        "mode": s.get("mode") or "collab",
+                        "notes": "DockerOps 远程被控（主控拨入，无 Docker 端口）",
+                        "capabilities": platform_capabilities(
+                            s.get("platform") or "generic", "agent"
+                        ),
+                    }
+                )
+            if stored_remote and any(i["id"] == stored_remote for i in items):
+                active_id = stored_remote
+                for i in items:
+                    i["is_active"] = i["id"] == active_id
+    except Exception:
+        pass
+
+    summary = device_connection_summary(items)
+    return {
+        "ok": True,
+        "items": items,
+        "active_id": active_id,
+        "connection_types": list(CONNECTION_TYPES),
+        # Precomputed grouping: the connect screen shows one section per
+        # connection type and hides the rest once something is active.
+        "groups": summary,
+        "hide_others": bool(active_id),
+        "viewer": actor,
+    }
+
+
+@app.post("/api/devices")
+async def api_devices_create(body: DeviceBody, actor: AuthUser) -> dict[str, Any]:
+    """Register and (by default) probe a device in one step."""
+    connection = normalize_connection(body.connection, docker_host=body.docker_host)
+    docker_host = (body.docker_host or "").strip()
+
+    if connection == "local" and not docker_host:
+        docker_host = (get_settings().docker_host or "unix:///var/run/docker.sock").strip()
+    if connection in {"ssh", "docker"} and not (docker_host or body.address):
+        raise HTTPException(status_code=400, detail="请填写主机地址或 Docker Host")
+    if connection == "ssh" and not body.address:
+        # An ssh:// URL carries the address already.
+        if docker_host.lower().startswith("ssh://"):
+            body.address = docker_host.split("@")[-1]
+        else:
+            raise HTTPException(status_code=400, detail="SSH 连接需要填写主机地址")
+
+    probe: dict[str, Any] | None = None
+    platform = normalize_platform(None)
+
+    if body.autodetect and connection in {"local", "ssh"}:
+        target = _device_ssh_target(
+            body,
+            address=body.address,
+            user=body.ssh_user,
+            port=body.ssh_port,
+            password=body.ssh_password,
+            key=body.ssh_key,
+        )
+        if connection == "local":
+            executor = get_host_executor()
+        else:
+            executor = ssh_executor(target)
+        if executor is not None:
+            probe = probe_host(executor)
+            if probe.get("ok"):
+                platform = normalize_platform(probe.get("platform"))
+
+    # An SSH device that will be rebuilt through templates needs the engine too;
+    # the socket is reachable over the same channel via the docker CLI.
+    if connection == "ssh" and not docker_host:
+        docker_host = f"ssh://{body.ssh_user or 'root'}@{body.address}"
+
+    try:
+        ep = create_endpoint(
+            name=body.name,
+            docker_host=docker_host or f"ssh://{body.ssh_user or 'root'}@{body.address}",
+            tls_enabled=body.tls_enabled,
+            tls_ca=body.tls_ca or "",
+            tls_cert=body.tls_cert or "",
+            tls_key=body.tls_key or "",
+            verify_tls=body.verify_tls,
+            is_default=body.is_default,
+            notes=body.notes or "",
+            connection=connection,
+            platform=platform,
+            platform_detected=bool(probe and probe.get("ok")),
+            address=body.address or "",
+            ssh_user=body.ssh_user or "",
+            ssh_password=body.ssh_password or "",
+            ssh_key=body.ssh_key or "",
+        )
+    except ValueError as e:
+        code = str(e)
+        msg = {
+            "name_required": "名称不能为空",
+            "docker_host_required": "Docker Host 不能为空",
+            "name_exists": "名称已存在",
+        }.get(code, str(e))
+        raise HTTPException(status_code=400, detail=msg) from e
+
+    audit(
+        "device_create",
+        actor=actor,
+        detail={"id": ep["id"], "name": ep["name"], "connection": connection, "platform": platform},
+    )
+    active_id = get_active_endpoint_id()
+    return {
+        "ok": True,
+        "item": public_device(ep, active_id=active_id),
+        "probe": probe,
+        "message": f"已添加设备「{ep['name']}」"
+        + (f"，识别为 {platform}" if probe and probe.get("ok") else "（未探测平台）"),
+    }
+
+
+@app.post("/api/devices/{device_id}/connect")
+async def api_devices_connect(
+    device_id: str, body: DeviceConnectBody, actor: AuthUser
+) -> dict[str, Any]:
+    """Probe a device and, on success, activate it.
+
+    Probing is what determines the platform, so the two are done together —
+    switching to a device whose platform was never confirmed would leave the UI
+    advertising capabilities that may not exist.
+    """
+    ep = get_endpoint(device_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="设备不存在")
+
+    connection = normalize_connection(ep.get("connection"), docker_host=ep.get("docker_host") or "")
+    stored = _stored_ssh_fields(ep)
+    probe: dict[str, Any] | None = None
+    executor = None
+
+    if connection in {"local", "ssh"}:
+        if connection == "local":
+            executor = get_host_executor()
+        else:
+            if not stored["address"]:
+                raise HTTPException(status_code=400, detail="设备缺少主机地址，请先编辑补全")
+            target = _device_ssh_target(
+                body,
+                address=stored["address"],
+                user=stored["ssh_user"],
+                port=22,
+                password=body.password or stored["ssh_password"],
+                key=body.ssh_key or stored["ssh_key"],
+            )
+            executor = ssh_executor(target)
+        if executor is None:
+            return {
+                "ok": False,
+                "message": "无法建立宿主机通道：请检查地址、凭据与网络连通性",
+                "probe": None,
+            }
+
+        if body.install_key:
+            pair = ensure_keypair()
+            if pair.get("ok"):
+                install_public_key(pair["public_key"], executor=executor)
+
+        if body.autodetect:
+            probe = probe_host(executor)
+            if not probe.get("ok"):
+                # Report the probe failure rather than connecting to something we
+                # could not identify — the user needs to know why.
+                return {
+                    "ok": False,
+                    "message": f"已连上主机但探测失败：{(probe.get('raw') or '').strip()[:200]}",
+                    "probe": probe,
+                }
+            ep = upsert_probe_result(device_id, probe)
+
+    # Engine reachability is a separate question from shell reachability.
+    engine = _test_endpoint_conn(ep)
+    if not engine.get("ok") and connection != "agent":
+        # A device whose engine is unreachable is still worth keeping, but
+        # activating it would make every page fail, so say so first.
+        return {
+            "ok": False,
+            "message": f"宿主机可达，但 Docker 引擎不可达：{engine.get('error') or '未知原因'}",
+            "probe": probe,
+            "engine": engine,
+        }
+
+    try:
+        set_active_endpoint_id(device_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="设备不存在") from None
+    except ValueError:
+        raise HTTPException(status_code=400, detail="设备已禁用") from None
+    try:
+        set_meta(META_ACTIVE_REMOTE, "")
+    except Exception:
+        pass
+
+    audit("device_connect", actor=actor, detail={"id": device_id, "connection": connection})
+    fresh = get_endpoint(device_id) or ep
+    platform = normalize_platform(fresh.get("platform"))
+    return {
+        "ok": True,
+        "item": public_device(fresh, active_id=device_id),
+        "probe": probe,
+        "engine": engine,
+        "active_id": device_id,
+        "message": f"已连接到「{fresh.get('name')}」（{platform}）",
+    }
+
+
+@app.post("/api/devices/{device_id}/probe")
+async def api_devices_probe(device_id: str, actor: AuthUser) -> dict[str, Any]:
+    """Re-detect the platform without changing which device is active."""
+    ep = get_endpoint(device_id)
+    if not ep:
+        raise HTTPException(status_code=404, detail="设备不存在")
+    connection = normalize_connection(ep.get("connection"), docker_host=ep.get("docker_host") or "")
+    if connection == "local":
+        executor = get_host_executor()
+    elif connection == "ssh":
+        stored = _stored_ssh_fields(ep)
+        executor = ssh_executor(
+            SshTarget(
+                stored["address"],
+                user=stored["ssh_user"],
+                password=stored["ssh_password"],
+                key_body=stored["ssh_key"],
+            )
+        )
+    else:
+        return {
+            "ok": False,
+            "message": "该连接方式不支持宿主机探测；仅本地与 SSH 连接可识别平台",
+        }
+    if executor is None:
+        return {"ok": False, "message": "无法建立宿主机通道"}
+    probe = probe_host(executor)
+    if probe.get("ok"):
+        ep = upsert_probe_result(device_id, probe)
+    return {
+        "ok": bool(probe.get("ok")),
+        "probe": probe,
+        "item": public_device(ep, active_id=get_active_endpoint_id()),
+        "message": (
+            f"识别为 {normalize_platform(probe.get('platform'))}"
+            if probe.get("ok")
+            else "探测失败"
+        ),
+    }
+
+
+@app.put("/api/devices/{device_id}")
+def api_devices_update(device_id: str, body: DevicePatchBody, actor: AuthUser) -> dict[str, Any]:
+    data = body.model_dump(exclude_none=True)
+    if "connection" in data:
+        data["connection"] = normalize_connection(data["connection"])
+    if "platform" in data:
+        data["platform"] = normalize_platform(data["platform"])
+    try:
+        ep = update_endpoint(device_id, **data)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="设备不存在") from None
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    invalidate_client(device_id)
+    reset_host_executor_cache()
+    audit("device_update", actor=actor, detail={"id": device_id, "fields": list(data.keys())})
+    return {
+        "ok": True,
+        "item": public_device(ep, active_id=get_active_endpoint_id()),
+        "message": "设备已更新",
+    }
+
+
+@app.delete("/api/devices/{device_id}")
+def api_devices_delete(device_id: str, actor: AuthUser) -> dict[str, Any]:
+    try:
+        delete_endpoint(device_id)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="设备不存在") from None
+    except ValueError as e:
+        if str(e) == "cannot_delete_last":
+            raise HTTPException(status_code=400, detail="不能删除最后一个设备") from e
+        raise HTTPException(status_code=400, detail=str(e)) from e
+    invalidate_client(device_id)
+    reset_host_executor_cache()
+    audit("device_delete", actor=actor, detail={"id": device_id})
+    return {
+        "ok": True,
+        "message": "设备已删除",
+        "active_id": get_active_endpoint_id(),
+        "groups": device_connection_summary(
+            [public_device(e) for e in list_endpoints()]
+        ),
+    }
+
+
+@app.get("/api/devices/keypair")
+def api_devices_keypair(actor: AuthUser) -> dict[str, Any]:
+    """Return the public key to install on a host that will be managed over SSH.
+
+    Generated on demand so the user can copy it before the first connect, instead
+    of discovering they need it only after a failure.
+    """
+    pair = ensure_keypair()
+    return {
+        "ok": bool(pair.get("ok")),
+        "created": bool(pair.get("created")),
+        "public_key": pair.get("public_key") or "",
+        "message": "已生成本机公钥，请添加到目标主机 ~/.ssh/authorized_keys"
+        if pair.get("ok")
+        else "无法生成密钥对",
     }
 
 
