@@ -21,6 +21,7 @@ from ops import safe_update
 
 META_UPDATE_STATUS = "update_status"
 META_UPDATE_SETTINGS = "update_settings"
+META_AUTO_FAILS = "update_auto_fail_streak"
 
 _bg_lock = threading.Lock()
 _bg_running = False
@@ -256,6 +257,9 @@ def get_update_auto_settings() -> dict[str, Any]:
     s = get_settings()
     base = {
         "auto_check_enabled": bool(s.update_auto_check),
+        # Checking is separate from applying: a user may want a notification
+        # without any container being replaced on a schedule.
+        "auto_apply_enabled": False,
         "auto_check_interval_hours": int(s.update_check_interval_hours),
         "startup_delay_sec": int(s.update_check_startup_delay_sec),
         "source": "env",
@@ -267,6 +271,8 @@ def get_update_auto_settings() -> dict[str, Any]:
             if isinstance(data, dict):
                 if "auto_check_enabled" in data:
                     base["auto_check_enabled"] = bool(data["auto_check_enabled"])
+                if "auto_apply_enabled" in data:
+                    base["auto_apply_enabled"] = bool(data["auto_apply_enabled"])
                 if "auto_check_interval_hours" in data:
                     try:
                         n = int(data["auto_check_interval_hours"])
@@ -282,15 +288,19 @@ def get_update_auto_settings() -> dict[str, Any]:
 def set_update_auto_settings(
     *,
     auto_check_enabled: bool | None = None,
+    auto_apply_enabled: bool | None = None,
     auto_check_interval_hours: int | None = None,
 ) -> dict[str, Any]:
     cur = get_update_auto_settings()
     if auto_check_enabled is not None:
         cur["auto_check_enabled"] = bool(auto_check_enabled)
+    if auto_apply_enabled is not None:
+        cur["auto_apply_enabled"] = bool(auto_apply_enabled)
     if auto_check_interval_hours is not None:
         cur["auto_check_interval_hours"] = max(1, min(48, int(auto_check_interval_hours)))
     store = {
         "auto_check_enabled": cur["auto_check_enabled"],
+        "auto_apply_enabled": cur["auto_apply_enabled"],
         "auto_check_interval_hours": cur["auto_check_interval_hours"],
     }
     set_meta(META_UPDATE_SETTINGS, json.dumps(store, ensure_ascii=False))
@@ -557,6 +567,174 @@ def pull_only_if_update(image: str, actor: str | None = None) -> dict[str, Any]:
         return {"ok": False, "pulled": False, "check": check, "message": str(e)}
 
 
+def apply_auto_updates(actor: str = "system-auto") -> dict[str, Any]:
+    """Update the containers whose policy says so, or explain why not.
+
+    Three independent ways an update run is refused, because a misconfigured
+    schedule that recreates the wrong container is worse than one that does
+    nothing:
+
+    1. **Per container** — a container is only touched when its own policy is
+       ``auto`` *and* it has a manager able to rebuild it. A container with an
+       available update but no rebuild path is reported as skipped, never
+       "updated".
+    2. **Whole run** — when every candidate turns out to be ineligible, the run
+       is recorded as a no-op with the reasons attached, rather than reporting a
+       success that changed nothing.
+    3. **Failure streak** — a container that fails ``_AUTO_FAIL_LIMIT`` times in
+       a row is parked, so a permanently broken image cannot be retried forever
+       at the cost of a restart each time.
+    """
+    from update_policy import eligible_targets, prune_missing
+
+    detect = detect_updates(only_running=True, actor=actor, persist=True)
+    if not detect.get("ok"):
+        return detect
+
+    available = detect.get("available") or []
+    apply_list, skip_list = eligible_targets(available)
+
+    # Park containers with a run of failures before choosing targets.
+    parked: list[dict[str, Any]] = []
+    still_apply: list[dict[str, Any]] = []
+    for item in apply_list:
+        name = item.get("name") or item.get("id") or ""
+        if _auto_fail_count(name) >= _AUTO_FAIL_LIMIT:
+            parked.append(
+                {
+                    **item,
+                    "skip_reason": f"连续失败 {_AUTO_FAIL_LIMIT} 次，已暂停自动更新",
+                }
+            )
+        else:
+            still_apply.append(item)
+
+    summary: dict[str, Any] = {
+        "candidates": len(available),
+        "applied": 0,
+        "skipped": len(skip_list),
+        "parked": len(parked),
+        "failed": 0,
+        "results": [],
+    }
+
+    if not still_apply:
+        # Whole-run breaker: nothing was eligible. "ok" would be misleading, so
+        # the outcome is reported as a no-op carrying every reason.
+        summary["noop"] = True
+        summary["reasons"] = [
+            {"name": s.get("name"), "reason": s.get("skip_reason")} for s in skip_list
+        ] + [{"name": s.get("name"), "reason": s.get("skip_reason")} for s in parked]
+        summary["message"] = (
+            f"本次无可自动更新的容器（{len(available)} 个候选："
+            f"跳过 {len(skip_list)}，暂停 {len(parked)}）"
+        )
+        if available:
+            try:
+                add_ops_record(
+                    action="auto_update",
+                    target=f"{len(available)} candidates",
+                    status="skipped",
+                    detail=summary,
+                    actor=actor,
+                )
+            except Exception:
+                pass
+        return {"ok": True, **summary}
+
+    for item in still_apply:
+        cid = item.get("id") or item.get("name")
+        name = item.get("name") or cid
+        if not cid:
+            continue
+        try:
+            r = safe_update(cid, image=item.get("image"), actor=actor)
+            ok = bool(r.get("ok"))
+        except Exception as e:
+            ok = False
+            r = {"ok": False, "message": str(e)}
+
+        if ok and not (r.get("partial")):
+            summary["applied"] += 1
+            _auto_fail_reset(name)
+        else:
+            summary["failed"] += 1
+            _auto_fail_bump(name)
+        summary["results"].append(
+            {
+                "name": name,
+                "id": cid,
+                "ok": ok,
+                "manager": item.get("manager"),
+                "message": r.get("message"),
+            }
+        )
+
+    try:
+        add_ops_record(
+            action="auto_update",
+            target=f"{len(still_apply)} containers",
+            status="ok" if summary["failed"] == 0 else ("partial" if summary["applied"] else "failed"),
+            detail=summary,
+            actor=actor,
+        )
+    except Exception:
+        pass
+
+    summary["message"] = (
+        f"自动更新：成功 {summary['applied']}，失败 {summary['failed']}，"
+        f"跳过 {summary['skipped']}，暂停 {summary['parked']}"
+    )
+    return {"ok": True, **summary}
+
+
+_AUTO_FAIL_LIMIT = 3
+_auto_fail_lock = threading.Lock()
+
+
+def _auto_fail_map() -> dict[str, int]:
+    raw = get_meta(META_AUTO_FAILS)
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+        return {str(k): int(v) for k, v in data.items()} if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def _auto_fail_count(name: str) -> int:
+    return _auto_fail_map().get((name or "").lstrip("/"), 0)
+
+
+def _auto_fail_bump(name: str) -> int:
+    key = (name or "").lstrip("/")
+    with _auto_fail_lock:
+        data = _auto_fail_map()
+        data[key] = data.get(key, 0) + 1
+        set_meta(META_AUTO_FAILS, json.dumps(data, ensure_ascii=False))
+        return data[key]
+
+
+def _auto_fail_reset(name: str) -> None:
+    key = (name or "").lstrip("/")
+    with _auto_fail_lock:
+        data = _auto_fail_map()
+        if key in data:
+            data.pop(key, None)
+            set_meta(META_AUTO_FAILS, json.dumps(data, ensure_ascii=False))
+
+
+def reset_auto_failures(name: str | None = None) -> dict[str, Any]:
+    """Clear the failure streak, so a fixed container is retried again."""
+    with _auto_fail_lock:
+        if name:
+            _auto_fail_reset(name)
+        else:
+            set_meta(META_AUTO_FAILS, "{}")
+    return {"ok": True, "failures": _auto_fail_map()}
+
+
 def run_background_detect_once(actor: str = "system") -> dict[str, Any]:
     """Silent detect used by scheduler (running containers only)."""
     return detect_updates(only_running=True, actor=actor, persist=True)
@@ -577,6 +755,8 @@ def start_update_auto_check_thread() -> None:
             try:
                 cfg = get_update_auto_settings()
                 if cfg.get("auto_check_enabled"):
+                    # Detect first: the summary is useful on its own even when
+                    # no container is set to auto-update.
                     try:
                         run_background_detect_once(actor="system-auto")
                     except Exception as e:
@@ -584,6 +764,16 @@ def start_update_auto_check_thread() -> None:
                             audit("update_auto_check_error", actor="system", detail={"error": str(e)})
                         except Exception:
                             pass
+                    # Then apply, but only for containers whose own policy opted
+                    # in and whose manager can rebuild them.
+                    if cfg.get("auto_apply_enabled"):
+                        try:
+                            apply_auto_updates(actor="system-auto")
+                        except Exception as e:
+                            try:
+                                audit("update_auto_apply_error", actor="system", detail={"error": str(e)})
+                            except Exception:
+                                pass
                 hours = int(cfg.get("auto_check_interval_hours") or 6)
                 time.sleep(max(3600, hours * 3600))
             except Exception:

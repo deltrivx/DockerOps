@@ -128,12 +128,23 @@ from unraid_mgr import (
     templates_available,
 )
 from update_detect import (
+    apply_auto_updates,
     detect_updates,
     get_cached_update_status,
     get_update_auto_settings,
     one_click_update,
+    reset_auto_failures,
     set_update_auto_settings,
     start_update_auto_check_thread,
+)
+from update_policy import (
+    VALID_ACTIONS,
+    eligible_targets,
+    get_policy,
+    prune_missing,
+    resolve_action,
+    set_policy,
+    set_policy_bulk,
 )
 from remote import (
     agent_is_managed_locked,
@@ -678,6 +689,9 @@ class SystemSettingsBody(BaseModel):
     https_proxy: str | None = None
     no_proxy: str | None = None
     auto_check_enabled: bool | None = None
+    # Applying is a separate opt-in from checking: a scheduled replacement is a
+    # different risk from a scheduled notification.
+    auto_apply_enabled: bool | None = None
     auto_check_interval_hours: int | None = Field(default=None, ge=1, le=48)
 
 
@@ -1878,6 +1892,17 @@ def api_rollback(container_id: str, actor: AuthUser) -> dict[str, Any]:
     return rollback_guide(container_id, actor=actor)
 
 
+class UpdatePolicyBody(BaseModel):
+    name: str = Field(..., min_length=1, description="容器名")
+    action: str = Field(..., description="auto | notify | ignore")
+    manager: str = ""
+    image: str = ""
+
+
+class UpdatePolicyBulkBody(BaseModel):
+    items: list[UpdatePolicyBody] = Field(default_factory=list)
+
+
 class DetectBody(BaseModel):
     container_ids: list[str] | None = None
     only_running: bool = False
@@ -1887,6 +1912,103 @@ class OneClickUpdateBody(BaseModel):
     container_ids: list[str] | None = None
     only_available: bool = True
     only_running: bool = False
+
+
+# ── Auto-update policy (per container) ───────────────────
+#
+# Whether a container may be replaced automatically is a per-container decision:
+# the platform-level switch only says "look for updates". These routes set the
+# per-container half, and report why a choice cannot be honoured rather than
+# accepting it and doing nothing.
+
+
+@app.get("/api/ops/update-policy")
+def api_update_policy_get(actor: OptionalUser = None) -> dict[str, Any]:
+    """Current policy plus a resolved view of every container's decision."""
+    pol = get_policy()
+    # Attach live manager/update state so the UI can show whether a choice is
+    # actionable without a second round trip.
+    resolved: list[dict[str, Any]] = []
+    try:
+        cache = get_cached_update_status()
+        by_name = {
+            (it.get("name") or "").lstrip("/"): it for it in (cache.get("items") or [])
+        }
+    except Exception:
+        by_name = {}
+    for name, entry in (pol.get("containers") or {}).items():
+        live = by_name.get(name) or {}
+        resolved.append(
+            {
+                "name": name,
+                "action": entry.get("action"),
+                "manager": entry.get("manager") or live.get("manager") or "",
+                "blocked": bool(entry.get("blocked")),
+                "blocked_reason": entry.get("blocked_reason") or "",
+                "update_available": bool(live.get("update_available")),
+                "image": entry.get("image") or live.get("image") or "",
+                "updated_at": entry.get("updated_at"),
+                "decision": resolve_action(name, entry.get("manager") or live.get("manager")),
+            }
+        )
+    return {
+        "ok": True,
+        "viewer": actor,
+        "default_action": pol["default_action"],
+        "valid_actions": list(VALID_ACTIONS),
+        "self_protected": pol["self_protected"],
+        "containers": resolved,
+        "count": len(resolved),
+    }
+
+
+@app.put("/api/ops/update-policy")
+def api_update_policy_set(body: UpdatePolicyBody, actor: AuthUser) -> dict[str, Any]:
+    """Set one container's auto-update action."""
+    try:
+        return set_policy(
+            body.name,
+            action=body.action,
+            manager=body.manager,
+            image=body.image,
+            actor=actor,
+        )
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e)) from e
+
+
+@app.put("/api/ops/update-policy/bulk")
+def api_update_policy_bulk(body: UpdatePolicyBulkBody, actor: AuthUser) -> dict[str, Any]:
+    """Set several at once; a bad entry does not discard the good ones."""
+    return set_policy_bulk([i.model_dump() for i in body.items], actor=actor)
+
+
+@app.post("/api/ops/update-policy/apply")
+def api_update_policy_apply(actor: AuthUser) -> dict[str, Any]:
+    """Run the auto-update pass now, honouring the per-container policy."""
+    return apply_auto_updates(actor=actor)
+
+
+@app.post("/api/ops/update-policy/reset-failures")
+def api_update_policy_reset_failures(
+    name: str = Query("", description="留空则清空全部"),
+    actor: AuthUser = ...,
+) -> dict[str, Any]:
+    """Clear the failure streak so paused containers are retried."""
+    return reset_auto_failures(name or None)
+
+
+@app.post("/api/ops/update-policy/prune")
+def api_update_policy_prune(actor: AuthUser) -> dict[str, Any]:
+    """Drop policy entries for containers that no longer exist."""
+    try:
+        names = {
+            (c.get("name") or "").lstrip("/") for c in list_containers(all_containers=True)
+        }
+    except Exception:
+        return {"ok": False, "message": "无法列举容器"}
+    n = prune_missing(names)
+    return {"ok": True, "removed": n, "message": f"已清理 {n} 条失效策略"}
 
 
 @app.post("/api/ops/detect-updates")
@@ -2014,12 +2136,18 @@ def api_put_system_settings(body: SystemSettingsBody, actor: AuthUser) -> dict[s
     auto_patch: dict[str, Any] = {}
     if "auto_check_enabled" in patch:
         auto_patch["auto_check_enabled"] = patch["auto_check_enabled"]
+    if "auto_apply_enabled" in patch:
+        auto_patch["auto_apply_enabled"] = patch["auto_apply_enabled"]
     if "auto_check_interval_hours" in patch:
         auto_patch["auto_check_interval_hours"] = patch["auto_check_interval_hours"]
     auto = get_update_auto_settings()
     if auto_patch:
         auto = set_update_auto_settings(**auto_patch)
-        messages.append("自动更新检测已保存")
+        messages.append(
+            "自动更新检测与自动执行设置已保存"
+            if "auto_apply_enabled" in auto_patch
+            else "自动更新检测已保存"
+        )
         audit("update_auto_settings", actor=actor or "unknown", detail=auto)
 
     # Proxy: only container env-at-boot locks; Web values always go to SQLite app_meta
