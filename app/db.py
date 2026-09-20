@@ -92,6 +92,14 @@ def init_db() -> None:
                     is_default INTEGER NOT NULL DEFAULT 0,
                     enabled INTEGER NOT NULL DEFAULT 1,
                     notes TEXT,
+                    connection TEXT NOT NULL DEFAULT 'local',
+                    platform TEXT NOT NULL DEFAULT 'generic',
+                    platform_detected INTEGER NOT NULL DEFAULT 0,
+                    address TEXT,
+                    ssh_user TEXT,
+                    ssh_password TEXT,
+                    ssh_key TEXT,
+                    last_probe TEXT,
                     created_at REAL NOT NULL,
                     updated_at REAL NOT NULL
                 );
@@ -113,6 +121,12 @@ def init_db() -> None:
             conn.commit()
         finally:
             conn.close()
+    # Migrate older endpoint tables in place: the device columns were added
+    # after 0.8.3 shipped, and an existing deployment must not lose its list.
+    try:
+        _migrate_endpoint_columns()
+    except Exception:
+        pass
     # Seed default endpoint after releasing _lock (ensure_default also takes _lock).
     try:
         ensure_default_endpoint()
@@ -413,6 +427,47 @@ def _try_json(s: str | None) -> Any:
 
 META_ACTIVE_ENDPOINT = "active_endpoint_id"
 
+# Columns added after the initial endpoints table. Each is (name, declaration);
+# both the CREATE TABLE above and this list must stay in sync.
+_ENDPOINT_EXTRA_COLUMNS: tuple[tuple[str, str], ...] = (
+    ("connection", "TEXT NOT NULL DEFAULT 'local'"),
+    ("platform", "TEXT NOT NULL DEFAULT 'generic'"),
+    ("platform_detected", "INTEGER NOT NULL DEFAULT 0"),
+    ("address", "TEXT"),
+    ("ssh_user", "TEXT"),
+    ("ssh_password", "TEXT"),
+    ("ssh_key", "TEXT"),
+    ("last_probe", "TEXT"),
+)
+
+
+def _migrate_endpoint_columns() -> None:
+    """Add device columns to a pre-existing endpoints table.
+
+    SQLite cannot add a NOT NULL column without a default, hence the explicit
+    defaults; they also make existing rows read as local/generic, which is the
+    correct interpretation of an endpoint created before devices existed.
+    """
+    with _lock:
+        conn = connect()
+        try:
+            existing = {
+                r[1] for r in conn.execute("PRAGMA table_info(docker_endpoints)").fetchall()
+            }
+            if not existing:
+                return
+            for col, decl in _ENDPOINT_EXTRA_COLUMNS:
+                if col in existing:
+                    continue
+                try:
+                    conn.execute(f"ALTER TABLE docker_endpoints ADD COLUMN {col} {decl}")
+                except Exception:
+                    # A concurrent start may have added it already.
+                    pass
+            conn.commit()
+        finally:
+            conn.close()
+
 
 def _row_endpoint(r: sqlite3.Row) -> dict[str, Any]:
     return {
@@ -427,9 +482,29 @@ def _row_endpoint(r: sqlite3.Row) -> dict[str, Any]:
         "is_default": bool(r["is_default"]),
         "enabled": bool(r["enabled"]),
         "notes": r["notes"] or "",
+        "connection": _row_get(r, "connection") or "local",
+        "platform": _row_get(r, "platform") or "generic",
+        "platform_detected": bool(_row_get(r, "platform_detected")),
+        "address": _row_get(r, "address") or "",
+        "ssh_user": _row_get(r, "ssh_user") or "",
+        "ssh_password": _row_get(r, "ssh_password") or "",
+        "ssh_key": _row_get(r, "ssh_key") or "",
+        "last_probe": _row_get(r, "last_probe") or "",
         "created_at": r["created_at"],
         "updated_at": r["updated_at"],
     }
+
+
+def _row_get(row: sqlite3.Row, key: str, default: Any = None) -> Any:
+    """Read a column that may be missing on an un-migrated database.
+
+    A SELECT * against a table the migration has not touched yet simply will not
+    have the key, and ``row[key]`` raises IndexError rather than returning None.
+    """
+    try:
+        return row[key]
+    except (IndexError, KeyError):
+        return default
 
 
 def ensure_default_endpoint() -> dict[str, Any]:
@@ -567,6 +642,14 @@ def create_endpoint(
     verify_tls: bool = True,
     is_default: bool = False,
     notes: str = "",
+    connection: str = "local",
+    platform: str = "generic",
+    platform_detected: bool = False,
+    address: str = "",
+    ssh_user: str = "",
+    ssh_password: str = "",
+    ssh_key: str = "",
+    last_probe: str = "",
 ) -> dict[str, Any]:
     eid = uuid.uuid4().hex
     now = time.time()
@@ -585,8 +668,10 @@ def create_endpoint(
                 """
                 INSERT INTO docker_endpoints (
                     id, name, docker_host, tls_enabled, tls_ca, tls_cert, tls_key,
-                    verify_tls, is_default, enabled, notes, created_at, updated_at
-                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                    verify_tls, is_default, enabled, notes, connection, platform,
+                    platform_detected, address, ssh_user, ssh_password, ssh_key,
+                    last_probe, created_at, updated_at
+                ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                 """,
                 (
                     eid,
@@ -600,6 +685,14 @@ def create_endpoint(
                     1 if is_default else 0,
                     1,
                     notes or "",
+                    connection or "local",
+                    platform or "generic",
+                    1 if platform_detected else 0,
+                    address or "",
+                    ssh_user or "",
+                    ssh_password or "",
+                    ssh_key or "",
+                    last_probe or "",
                     now,
                     now,
                 ),
@@ -628,6 +721,14 @@ def update_endpoint(endpoint_id: str, **fields: Any) -> dict[str, Any]:
         "is_default",
         "enabled",
         "notes",
+        "connection",
+        "platform",
+        "platform_detected",
+        "address",
+        "ssh_user",
+        "ssh_password",
+        "ssh_key",
+        "last_probe",
     }
     patch = {k: v for k, v in fields.items() if k in allowed and v is not None}
     if "name" in patch:
@@ -638,7 +739,7 @@ def update_endpoint(endpoint_id: str, **fields: Any) -> dict[str, Any]:
         patch["docker_host"] = str(patch["docker_host"]).strip()
         if not patch["docker_host"]:
             raise ValueError("docker_host_required")
-    for b in ("tls_enabled", "verify_tls", "is_default", "enabled"):
+    for b in ("tls_enabled", "verify_tls", "is_default", "enabled", "platform_detected"):
         if b in patch:
             patch[b] = 1 if patch[b] else 0
     if not patch:
